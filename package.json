@@ -1,1 +1,1 @@
-{"name":"taixiu-tool","version":"1.0.0","scripts":{"start":"node xocdia88.js"},"dependencies":{"ws":"^8.16.0"}}
+{"name":"taixiu-tool","version":"1.0.0","scripts":{"start":"node xocdia88.js"},"dependencies":{"express":"^5.2.1","ws":"^8.21.0"},"description":"","main":"xocdia88.js","repository":{"type":"git","url":"git+https://github.com/laubausau1-cpu/taixiu-tool.git"},"keywords":[],"author":"","license":"ISC","type":"commonjs","bugs":{"url":"https://github.com/laubausau1-cpu/taixiu-tool/issues"},"homepage":"https://github.com/laubausau1-cpu/taixiu-tool#readme"}
