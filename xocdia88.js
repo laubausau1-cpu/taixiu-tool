@@ -1,117 +1,151 @@
+
 // ============================================================
 // xocdia88.js — Engine MD5 + WebSocket + API Server
 // 47 pattern, 4 nhánh predict, tự động lưu
-// Target accuracy: ≥85%
-// Chạy: WS_URL="wss://..." node xocdia88.js
+// Chạy: node xocdia88.js
 // ============================================================
 
 // ============================================================
-// 1. IMPORTS VÀ CONSTANTS
+// MODULE IMPORTS
 // ============================================================
 
-// WebSocket client để kết nối realtime
-const WebSocket = require('ws');
-// Đọc/ghi file dữ liệu
-const fs = require('fs');
-// Xử lý đường dẫn file
-const path = require('path');
-// HTTP server cho API
-const http = require('http');
+// WebSocket client để kết nối tới server game
+const WebSocket = require('ws')
 
-// URL WebSocket server từ biến môi trường hoặc tham số dòng lệnh
-const WS_URL = process.env.WS_URL || process.argv[2] || 'wss://default.example.com';
-// Tên hub đăng ký
-const HUB_NAME = 'md5luckydiceHub';
-// Thư mục lưu dữ liệu
-const DATA_DIR = path.join(__dirname, 'data');
-// File lịch sử phiên
-const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
-// File log hệ thống
-const LOG_FILE = path.join(DATA_DIR, 'log.txt');
-// File log dự đoán
-const PRED_FILE = path.join(DATA_DIR, 'prediction_log.json');
-// File lưu trọng số pattern
-const WEIGHTS_FILE = path.join(DATA_DIR, 'pattern_weights.json');
+// File system để đọc ghi file data
+const fs = require('fs')
+
+// Path để xử lý đường dẫn file
+const path = require('path')
+
+// HTTP server để tạo API
+const http = require('http')
+
+
+// ============================================================
+// CONSTANTS - CẤU HÌNH HỆ THỐNG
+// ============================================================
+
+// WebSocket URL mặc định kết nối tới server game
+const WS_URL = process.env.WS_URL || 'wss://taixiumd5.system32-cloudfare-356783752985678522.monster/signalr/connect?transport=webSockets&connectionToken=z0%2Bp4sHHXusB7hFR4ZBSkc7TBejGa%2BoooswT8oNe8KhHmsJEIWLTtZh40jp%2FuaCUuwj1vJOAqw%2Fc1EBSv7ebeZGlhgS2FeQ1GNBYU%2F5AVausPA4HmHluu0RJW1Pwcy9H&connectionData=%5B%7B%22name%22%3A%22md5luckydiceHub%22%7D%5D&tid=1'
+
+// Tên hub SignalR để đăng ký với server
+const HUB_NAME = 'md5luckydiceHub'
+
+// Thư mục lưu trữ dữ liệu
+const DATA_DIR = path.join(__dirname, 'data')
+
+// File lưu lịch sử kết quả
+const HISTORY_FILE = path.join(DATA_DIR, 'history.json')
+
+// File lưu log hệ thống
+const LOG_FILE = path.join(DATA_DIR, 'log.txt')
+
+// File lưu lịch sử dự đoán
+const PRED_FILE = path.join(DATA_DIR, 'prediction_log.json')
+
 // Cổng API server
-const API_PORT = process.env.API_PORT || 8888;
-// Thời gian tự động lưu (5 phút)
-const SAVE_MS = 300000;
-// Số lượng lịch sử tối đa
-const MAX_H = 100000;
-// Số phiên tối thiểu để bắt đầu phân tích
-const MIN_S = 6;
+const API_PORT = parseInt(process.env.PORT || '8888')
+
+// Thời gian tự động lưu data (5 phút)
+const SAVE_MS = 300000
+
+// Số lượng lịch sử tối đa trong bộ nhớ
+const MAX_H = 100000
+
+// Số phiên tối thiểu để bắt đầu dự đoán
+const MIN_S = 6
+
 
 // ============================================================
-// 2. HÀM TIỆN ÍCH
+// HÀM TIỆN ÍCH
 // ============================================================
 
 /**
  * Tạo thư mục data nếu chưa tồn tại
  * Đầu vào: không
- * Đầu ra: không (tạo thư mục)
+ * Đầu ra: không - tạo thư mục data
  */
 function ensureDir() {
+    // Bọc trong try-catch để tránh crash
     try {
         // Kiểm tra thư mục data đã tồn tại chưa
         if (!fs.existsSync(DATA_DIR)) {
-            // Tạo thư mục data nếu chưa có
-            fs.mkdirSync(DATA_DIR, { recursive: true });
-            log('INFO', 'Đã tạo thư mục data: ' + DATA_DIR);
+            // Tạo thư mục data với recursive
+            fs.mkdirSync(DATA_DIR, { recursive: true })
+            // Log thông báo tạo thành công
+            log('INFO', 'Đã tạo thư mục data: ' + DATA_DIR)
         }
     } catch (err) {
-        // Log lỗi nếu không tạo được
-        log('ERROR', 'Không tạo được thư mục data: ' + err.message);
+        // Log lỗi nếu không tạo được thư mục
+        log('ERROR', 'Không tạo được thư mục data: ' + err.message)
     }
 }
+
 
 /**
  * Ghi log ra console và file log.txt
- * Đầu vào: level - mức độ log (INFO/WARN/ERROR), message - nội dung log
- * Đầu ra: không
+ * Đầu vào: level - mức độ log (INFO/WARN/ERROR)
+ *          message - nội dung log
+ * Đầu ra: không - ghi ra console và file
  */
 function log(level, message) {
-    // Tạo timestamp hiện tại
-    const timestamp = new Date().toISOString();
-    // Format dòng log
-    const line = `[${timestamp}] [${level}] ${message}`;
-    // In ra console
-    console.log(line);
+    // Tạo timestamp hiện tại theo ISO format
+    const timestamp = new Date().toISOString()
+    // Format dòng log với timestamp và level
+    const line = '[' + timestamp + '] [' + level + '] ' + message
+    // In ra console để xem trực tiếp
+    console.log(line)
+    // Bọc trong try-catch để tránh lỗi ghi file
     try {
-        // Ghi thêm vào file log.txt
-        fs.appendFileSync(LOG_FILE, line + '\n');
+        // Ghi thêm dòng log vào file log.txt
+        fs.appendFileSync(LOG_FILE, line + '\n')
     } catch (err) {
-        // Nếu không ghi được file thì in lỗi ra console
-        console.error('Không ghi được log file:', err.message);
+        // In lỗi ra console nếu không ghi được file
+        console.error('Không ghi được log file:', err.message)
     }
 }
 
+
 /**
  * Giới hạn giá trị trong khoảng [min, max]
- * Đầu vào: value - giá trị cần clamp, min - giới hạn dưới, max - giới hạn trên
+ * Đầu vào: value - giá trị cần clamp
+ *          min - giới hạn dưới
+ *          max - giới hạn trên
  * Đầu ra: giá trị đã được clamp
  */
 function clamp(value, min, max) {
-    // Trả về max nếu value > max, min nếu value < min, ngược lại trả về value
-    return Math.max(min, Math.min(max, value));
+    // Nếu value nhỏ hơn min thì trả về min
+    if (value < min) {
+        return min
+    }
+    // Nếu value lớn hơn max thì trả về max
+    if (value > max) {
+        return max
+    }
+    // Ngược lại trả về chính value
+    return value
 }
+
 
 /**
  * Format thời gian từ milliseconds thành chuỗi "0d 0h 0m"
  * Đầu vào: ms - thời gian tính bằng milliseconds
- * Đầu ra: chuỗi format
+ * Đầu ra: chuỗi format thời gian
  */
 function timeStr(ms) {
-    // Tính số giây
-    const seconds = Math.floor(ms / 1000);
-    // Tính số phút
-    const minutes = Math.floor(seconds / 60);
-    // Tính số giờ
-    const hours = Math.floor(minutes / 60);
-    // Tính số ngày
-    const days = Math.floor(hours / 24);
-    // Trả về chuỗi format
-    return `${days}d ${hours % 24}h ${minutes % 60}m`;
+    // Tính số giây từ milliseconds
+    const seconds = Math.floor(ms / 1000)
+    // Tính số phút từ giây
+    const minutes = Math.floor(seconds / 60)
+    // Tính số giờ từ phút
+    const hours = Math.floor(minutes / 60)
+    // Tính số ngày từ giờ
+    const days = Math.floor(hours / 24)
+    // Trả về chuỗi format "0d 0h 0m"
+    return days + 'd ' + (hours % 24) + 'h ' + (minutes % 60) + 'm'
 }
+
 
 /**
  * Hàm sigmoid: 1 / (1 + e^(-x))
@@ -119,19 +153,30 @@ function timeStr(ms) {
  * Đầu ra: giá trị sigmoid trong khoảng (0, 1)
  */
 function sigmoid(x) {
-    // Công thức sigmoid chuẩn
-    return 1.0 / (1.0 + Math.exp(-x));
+    // Tính e mũ -x
+    const expNegX = Math.exp(-x)
+    // Tính mẫu số 1 + e^(-x)
+    const denominator = 1.0 + expNegX
+    // Trả về 1 / mẫu số
+    return 1.0 / denominator
 }
+
 
 /**
  * Tính xác suất với Laplace smoothing: P = (c + 1) / (t + 2)
- * Đầu vào: c - số lần thành công, t - tổng số lần thử
+ * Đầu vào: c - số lần thành công
+ *          t - tổng số lần thử
  * Đầu ra: xác suất đã được làm mịn Laplace
  */
 function laplaceProb(c, t) {
-    // Công thức Laplace smoothing
-    return (c + 1) / (t + 2);
+    // Tử số = số lần thành công + 1
+    const numerator = c + 1
+    // Mẫu số = tổng số lần + 2
+    const denominator = t + 2
+    // Trả về xác suất Laplace
+    return numerator / denominator
 }
+
 
 /**
  * Chuẩn hóa kết quả Tài/Xỉu thành 'T' hoặc 'X'
@@ -140,132 +185,193 @@ function laplaceProb(c, t) {
  */
 function normalizeResult(raw) {
     // Nếu không có dữ liệu thì trả về 'T'
-    if (!raw) return 'T';
+    if (!raw) {
+        return 'T'
+    }
     // Chuyển về chữ thường và bỏ khoảng trắng
-    const lower = raw.trim().toLowerCase();
-    // Bảng mapping các từ khóa
+    const lower = raw.trim().toLowerCase()
+    // Bảng mapping các từ khóa về Tài/Xỉu
     const map = {
-        't': 'T', 'tai': 'T', 'tài': 'T',
-        'x': 'X', 'xiu': 'X', 'xỉu': 'X',
-        'c': 'T', 'chan': 'T', 'chẵn': 'T',
-        'l': 'X', 'le': 'X', 'lẻ': 'X'
-    };
-    // Trả về ký hiệu T hoặc X
-    return map[lower] || 'T';
+        't': 'T',
+        'tai': 'T',
+        'tài': 'T',
+        'x': 'X',
+        'xiu': 'X',
+        'xỉu': 'X',
+        'c': 'T',
+        'chan': 'T',
+        'chẵn': 'T',
+        'l': 'X',
+        'le': 'X',
+        'lẻ': 'X'
+    }
+    // Trả về ký hiệu T hoặc X từ bảng mapping
+    const result = map[lower]
+    // Nếu không có trong bảng mapping thì trả về 'T'
+    if (result) {
+        return result
+    }
+    return 'T'
 }
+
 
 /**
  * Lấy N phần tử cuối cùng từ mảng
- * Đầu vào: arr - mảng dữ liệu, n - số phần tử cần lấy
+ * Đầu vào: arr - mảng dữ liệu
+ *          n - số phần tử cần lấy
  * Đầu ra: mảng n phần tử cuối
  */
 function getLastN(arr, n) {
     // Nếu n <= 0 thì trả về mảng rỗng
-    if (n <= 0) return [];
-    // Mảng kết quả
-    const result = [];
+    if (n <= 0) {
+        return []
+    }
+    // Tạo mảng kết quả rỗng
+    const result = []
     // Duyệt từ cuối mảng lên đầu
-    for (let i = arr.length - 1; i >= 0 && result.length < n; i--) {
-        result.push(arr[i]);
+    for (let i = arr.length - 1; i >= 0; i--) {
+        // Nếu đã lấy đủ n phần tử thì dừng
+        if (result.length >= n) {
+            break
+        }
+        // Thêm phần tử vào mảng kết quả
+        result.push(arr[i])
     }
     // Đảo ngược để trả về đúng thứ tự ban đầu
-    result.reverse();
-    return result;
+    result.reverse()
+    // Trả về mảng kết quả
+    return result
 }
+
 
 /**
  * Tính calcProb: clamp(score, 0.1, 0.95) * 0.5 ± 0.5
- * Đầu vào: c - boolean hướng (true = Tài), score - điểm số
+ * Đầu vào: c - boolean hướng (true = Tài)
+ *          score - điểm số
  * Đầu ra: xác suất trong khoảng [0, 1]
  */
 function calcProb(c, score) {
     // Clamp score trong khoảng [0.1, 0.95]
-    const clampedScore = clamp(score, 0.1, 0.95);
+    const clampedScore = clamp(score, 0.1, 0.95)
     // Tính một nửa của score đã clamp
-    const half = clampedScore * 0.5;
-    // Nếu c = true (Tài): 0.5 + half, ngược lại: 0.5 - half
-    return c ? (0.5 + half) : (0.5 - half);
+    const half = clampedScore * 0.5
+    // Nếu c = true (Tài): 0.5 + half
+    if (c) {
+        return 0.5 + half
+    }
+    // Nếu c = false (Xỉu): 0.5 - half
+    return 0.5 - half
 }
 
+
 /**
- * Hàm forward neural network: sigmoid(bias + sum(input[i] * weights[i]))
- * Đầu vào: inputs - mảng giá trị đầu vào, weights - mảng trọng số, bias - độ lệch
+ * Hàm forward neural network
+ * Đầu vào: inputs - mảng giá trị đầu vào
+ *          weights - mảng trọng số
+ *          bias - độ lệch
  * Đầu ra: giá trị sigmoid đã clamp trong [0, 1]
  */
 function forward(inputs, weights, bias) {
     // Bắt đầu với bias
-    let sum = bias;
+    let sum = bias
     // Cộng dồn input[i] * weights[i]
-    for (let i = 0; i < inputs.length && i < weights.length; i++) {
-        sum += inputs[i] * weights[i];
+    for (let i = 0; i < inputs.length; i++) {
+        // Nếu đã hết weights thì dừng
+        if (i >= weights.length) {
+            break
+        }
+        // Cộng tích input và weight vào tổng
+        sum = sum + inputs[i] * weights[i]
     }
     // Trả về sigmoid đã clamp trong [0, 1]
-    return clamp(sigmoid(sum), 0.0, 1.0);
+    return clamp(sigmoid(sum), 0.0, 1.0)
 }
+
 
 /**
  * Hàm getQuickAnalysis: phân tích nhanh 20 phiên cuối
  * Đầu vào: history - mảng lịch sử các phiên
- * Đầu ra: { prediction: boolean (true = Tài), confidence: number }
+ * Đầu ra: { prediction: boolean, confidence: number }
  */
 function getQuickAnalysis(history) {
     // Lấy 20 phiên cuối cùng
-    const sessions = getLastN(history, 20);
+    const sessions = getLastN(history, 20)
     // Nếu không có phiên nào thì trả về mặc định
     if (sessions.length === 0) {
-        return { prediction: true, confidence: 0.5 };
+        return { prediction: true, confidence: 0.5 }
     }
     // Đếm số phiên Tài
-    let taiCount = 0;
+    let taiCount = 0
+    // Duyệt qua từng phiên
     for (const s of sessions) {
-        if (s.result === 'T') taiCount++;
+        // Nếu kết quả là Tài thì tăng biến đếm
+        if (s.result === 'T') {
+            taiCount = taiCount + 1
+        }
     }
-    const total = sessions.length;
+    // Tổng số phiên
+    const total = sessions.length
     // Tính xác suất Tài bằng Laplace smoothing
-    const probTai = laplaceProb(taiCount, total);
-    // Tính độ lệch so với 0.5 và clamp
-    const imbalance = clamp(Math.abs(probTai - 0.5) * 1.5, 0.3, 0.88);
+    const probTai = laplaceProb(taiCount, total)
+    // Tính độ lệch so với 0.5
+    const diff = probTai - 0.5
+    // Tính imbalance và clamp trong [0.3, 0.88]
+    const imbalance = clamp(Math.abs(diff) * 1.5, 0.3, 0.88)
     // Dự đoán: true nếu số Tài >= số Xỉu
-    const prediction = taiCount >= (total - taiCount);
+    const prediction = taiCount >= (total - taiCount)
     // Trả về kết quả
-    return { prediction, confidence: imbalance };
+    return { prediction: prediction, confidence: imbalance }
 }
 
+
 // ============================================================
-// 3. CLASS PREDICTIONENGINE
+// CLASS PREDICTIONENGINE
 // Dịch 100% từ FloatingServiceXocDiaMD5.smali
 // 47 pattern + 4 nhánh predict
 // ============================================================
 
 class PredictionEngine {
+
     /**
      * Khởi tạo engine với các tham số từ Smali
      */
     constructor() {
-        // Bộ trọng số neural network [0.35, 0.35, 0.3]
-        this.weights = [0.35, 0.35, 0.3];
+        // Bộ trọng số neural network [0.35, 0.35, 0.3] từ Smali
+        this.weights = [0.35, 0.35, 0.3]
+
         // Bias neural network
-        this.bias = 0.5;
+        this.bias = 0.5
+
         // Số phiên tối thiểu để bắt đầu phân tích
-        this.MIN_S = 6;
+        this.MIN_S = 6
+
         // Lịch sử kết quả các phiên
-        this.history = [];
+        this.history = []
+
         // Danh sách phiên đầy đủ (bao gồm cả thông tin dice)
-        this.sessions = [];
+        this.sessions = []
+
         // Log dự đoán
-        this.predictionLog = [];
+        this.predictionLog = []
+
         // Dự đoán cuối cùng
-        this.lastPrediction = null;
+        this.lastPrediction = null
+
         // ID phiên cuối cùng
-        this.lastSessionId = 0;
+        this.lastSessionId = 0
+
         // Trọng số từng pattern (từ file hoặc mặc định)
-        this.patternWeights = {};
+        this.patternWeights = {}
+
         // Đếm số lần pattern dự đoán đúng
-        this.patternSuccessCount = {};
+        this.patternSuccessCount = {}
+
         // Đếm số lần pattern dự đoán sai
-        this.patternFailCount = {};
+        this.patternFailCount = {}
+
         // Lưu thời gian giữa các phiên
-        this.y = [];
+        this.y = []
+
         // Thống kê engine
         this.stats = {
             totalSessions: 0,
@@ -278,115 +384,107 @@ class PredictionEngine {
             currentStreakType: null,
             currentStreakCount: 0,
             startTime: Date.now()
-        };
+        }
+
         // Tải dữ liệu từ file
-        this.loadHistory();
-        this.loadPredictionLog();
-        this.loadPatternWeights();
+        this.loadHistory()
+
+        // Tải prediction log từ file
+        this.loadPredictionLog()
+
         // Hiệu chỉnh từ lịch sử
-        this.calibrateFromHistory();
+        this.calibrateFromHistory()
     }
+
 
     /**
      * Tải lịch sử từ file history.json
      * Đầu vào: không
-     * Đầu ra: không (nạp vào this.history và this.sessions)
+     * Đầu ra: không - nạp vào this.history và this.sessions
      */
     loadHistory() {
         try {
             // Kiểm tra file history.json có tồn tại không
             if (fs.existsSync(HISTORY_FILE)) {
                 // Đọc và parse JSON
-                const data = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+                const data = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'))
+
                 // Nếu có dữ liệu history
                 if (data.history && Array.isArray(data.history)) {
                     // Nạp từng phiên vào history
                     for (const item of data.history) {
-                        this.history.push({
+                        // Tạo object phiên
+                        const session = {
                             sessionId: item.sessionId,
                             result: item.result,
                             total: item.total,
                             timestamp: item.timestamp || Date.now()
-                        });
+                        }
+                        // Thêm vào history
+                        this.history.push(session)
+
                         // Cập nhật thống kê
-                        this.stats.totalSessions++;
+                        this.stats.totalSessions = this.stats.totalSessions + 1
+
+                        // Cập nhật đếm Tài/Xỉu
                         if (item.result === 'T') {
-                            this.stats.totalTai++;
+                            this.stats.totalTai = this.stats.totalTai + 1
                         } else {
-                            this.stats.totalXiu++;
+                            this.stats.totalXiu = this.stats.totalXiu + 1
                         }
                     }
-                    log('INFO', `Đã tải ${data.history.length} phiên từ history.json`);
+                    // Log số phiên đã tải
+                    log('INFO', 'Đã tải ' + data.history.length + ' phiên từ history.json')
                 }
+
                 // Nếu có dữ liệu sessions
                 if (data.sessions && Array.isArray(data.sessions)) {
-                    this.sessions = data.sessions;
+                    this.sessions = data.sessions
                 }
+
                 // Nếu có dữ liệu stats
                 if (data.stats) {
-                    this.stats = { ...this.stats, ...data.stats, startTime: this.stats.startTime };
+                    this.stats = Object.assign({}, this.stats, data.stats)
+                    this.stats.startTime = this.stats.startTime || Date.now()
                 }
             }
         } catch (err) {
-            log('ERROR', 'Lỗi tải history.json: ' + err.message);
+            // Log lỗi nếu không tải được
+            log('ERROR', 'Lỗi tải history.json: ' + err.message)
         }
     }
+
 
     /**
      * Tải prediction log từ file
      * Đầu vào: không
-     * Đầu ra: không (nạp vào this.predictionLog)
+     * Đầu ra: không - nạp vào this.predictionLog
      */
     loadPredictionLog() {
         try {
             // Kiểm tra file prediction_log.json có tồn tại không
             if (fs.existsSync(PRED_FILE)) {
                 // Đọc và parse JSON
-                const data = JSON.parse(fs.readFileSync(PRED_FILE, 'utf8'));
+                const data = JSON.parse(fs.readFileSync(PRED_FILE, 'utf8'))
+
                 // Nếu là mảng thì nạp vào predictionLog
                 if (Array.isArray(data)) {
-                    this.predictionLog = data;
-                    log('INFO', `Đã tải ${data.length} dự đoán từ prediction_log.json`);
+                    this.predictionLog = data
+                    // Log số dự đoán đã tải
+                    log('INFO', 'Đã tải ' + data.length + ' dự đoán từ prediction_log.json')
                 }
             }
         } catch (err) {
-            log('ERROR', 'Lỗi tải prediction_log.json: ' + err.message);
+            // Log lỗi nếu không tải được
+            log('ERROR', 'Lỗi tải prediction_log.json: ' + err.message)
         }
     }
 
-    /**
-     * Tải trọng số pattern từ file
-     * Đầu vào: không
-     * Đầu ra: không (nạp vào this.patternWeights)
-     */
-    loadPatternWeights() {
-        try {
-            // Kiểm tra file pattern_weights.json có tồn tại không
-            if (fs.existsSync(WEIGHTS_FILE)) {
-                // Đọc và parse JSON
-                const data = JSON.parse(fs.readFileSync(WEIGHTS_FILE, 'utf8'));
-                // Nạp trọng số pattern
-                if (data.weights) {
-                    this.patternWeights = data.weights;
-                }
-                // Nạp số lần đúng/sai
-                if (data.successCount) {
-                    this.patternSuccessCount = data.successCount;
-                }
-                if (data.failCount) {
-                    this.patternFailCount = data.failCount;
-                }
-                log('INFO', 'Đã tải trọng số pattern từ pattern_weights.json');
-            }
-        } catch (err) {
-            log('ERROR', 'Lỗi tải pattern_weights.json: ' + err.message);
-        }
-    }
 
     /**
      * Lưu lịch sử ra file history.json
      * Đầu vào: không
-     * Đầu ra: không (ghi file)
+     * Đầu ra: không - ghi file
      */
     saveHistory() {
         try {
@@ -396,50 +494,33 @@ class PredictionEngine {
                 sessions: this.sessions.slice(-10000),
                 stats: this.stats,
                 savedAt: new Date().toISOString()
-            };
-            // Ghi ra file
-            fs.writeFileSync(HISTORY_FILE, JSON.stringify(data, null, 2));
+            }
+            // Ghi ra file history.json
+            fs.writeFileSync(HISTORY_FILE, JSON.stringify(data, null, 2))
         } catch (err) {
-            log('ERROR', 'Lỗi lưu history.json: ' + err.message);
+            // Log lỗi nếu không lưu được
+            log('ERROR', 'Lỗi lưu history.json: ' + err.message)
         }
     }
+
 
     /**
      * Lưu prediction log ra file
      * Đầu vào: không
-     * Đầu ra: không (ghi file)
+     * Đầu ra: không - ghi file
      */
     savePredictionLog() {
         try {
             // Lấy tối đa 10000 dự đoán gần nhất
-            const data = this.predictionLog.slice(-10000);
-            // Ghi ra file
-            fs.writeFileSync(PRED_FILE, JSON.stringify(data, null, 2));
+            const data = this.predictionLog.slice(-10000)
+            // Ghi ra file prediction_log.json
+            fs.writeFileSync(PRED_FILE, JSON.stringify(data, null, 2))
         } catch (err) {
-            log('ERROR', 'Lỗi lưu prediction_log.json: ' + err.message);
+            // Log lỗi nếu không lưu được
+            log('ERROR', 'Lỗi lưu prediction_log.json: ' + err.message)
         }
     }
 
-    /**
-     * Lưu trọng số pattern ra file
-     * Đầu vào: không
-     * Đầu ra: không (ghi file)
-     */
-    savePatternWeights() {
-        try {
-            // Tạo object dữ liệu để lưu
-            const data = {
-                weights: this.patternWeights,
-                successCount: this.patternSuccessCount,
-                failCount: this.patternFailCount,
-                savedAt: new Date().toISOString()
-            };
-            // Ghi ra file
-            fs.writeFileSync(WEIGHTS_FILE, JSON.stringify(data, null, 2));
-        } catch (err) {
-            log('ERROR', 'Lỗi lưu pattern_weights.json: ' + err.message);
-        }
-    }
 
     /**
      * Hiệu chỉnh engine từ dữ liệu lịch sử
@@ -451,28 +532,23 @@ class PredictionEngine {
             // Nếu có đủ dữ liệu lịch sử
             if (this.history.length >= this.MIN_S) {
                 // Cập nhật thời gian giữa các phiên
-                for (let i = 1; i < Math.min(this.history.length, 20); i++) {
-                    const delta = (this.history[i].timestamp - this.history[i-1].timestamp) / 1000;
-                    this.y.push(delta);
+                const maxCalibrate = Math.min(this.history.length, 20)
+                // Duyệt qua từng phiên
+                for (let i = 1; i < maxCalibrate; i++) {
+                    // Tính khoảng thời gian giữa 2 phiên
+                    const delta = (this.history[i].timestamp - this.history[i - 1].timestamp) / 1000
+                    // Thêm vào mảng y
+                    this.y.push(delta)
                 }
-                log('INFO', `Đã hiệu chỉnh từ ${this.history.length} phiên lịch sử`);
+                // Log thông báo
+                log('INFO', 'Đã hiệu chỉnh từ ' + this.history.length + ' phiên lịch sử')
             }
         } catch (err) {
-            log('ERROR', 'Lỗi hiệu chỉnh: ' + err.message);
+            // Log lỗi nếu không hiệu chỉnh được
+            log('ERROR', 'Lỗi hiệu chỉnh: ' + err.message)
         }
     }
 
-    /**
-     * Lấy điểm động cho pattern dựa trên lịch sử thành công
-     * Đầu vào: name - tên pattern, base - điểm cơ bản
-     * Đầu ra: điểm đã điều chỉnh
-     */
-    getPatternDynamicScore(name, base) {
-        // Lấy trọng số đã lưu hoặc dùng base
-        const weight = this.patternWeights[name] || base;
-        // Trả về điểm đã clamp
-        return clamp(weight, 0.25, 0.98);
-    }
 
     /**
      * Lấy N phần tử cuối cùng từ lịch sử
@@ -480,8 +556,9 @@ class PredictionEngine {
      * Đầu ra: mảng count phần tử cuối
      */
     getLastElements(count) {
-        return getLastN(this.history, count);
+        return getLastN(this.history, count)
     }
+
 
     /**
      * Lấy phần tử từ vị trí pos tính từ cuối lên
@@ -490,29 +567,36 @@ class PredictionEngine {
      */
     getElementFromEnd(pos) {
         // Tính index từ đầu mảng
-        const idx = this.history.length - 1 - pos;
+        const idx = this.history.length - 1 - pos
         // Trả về phần tử nếu index hợp lệ
         if (idx >= 0) {
-            return this.history[idx];
+            return this.history[idx]
         }
-        return null;
+        return null
     }
+
 
     /**
      * Đếm số lần xuất hiện của một giá trị trong mảng
-     * Đầu vào: arr - mảng dữ liệu, val - giá trị cần đếm
+     * Đầu vào: arr - mảng dữ liệu
+     *          val - giá trị cần đếm
      * Đầu ra: số lần xuất hiện
      */
     countOccurrences(arr, val) {
-        let count = 0;
-        // Duyệt qua từng phần tử
+        // Khởi tạo biến đếm
+        let count = 0
+        // Duyệt qua từng phần tử trong mảng
         for (const item of arr) {
+            // Nếu phần tử bằng giá trị cần đếm
             if (item === val) {
-                count++;
+                // Tăng biến đếm lên 1
+                count = count + 1
             }
         }
-        return count;
+        // Trả về số lần xuất hiện
+        return count
     }
+
 
     /**
      * Đếm streak của phần tử cuối cùng trong mảng
@@ -521,18 +605,30 @@ class PredictionEngine {
      */
     getStreak(arr) {
         // Nếu mảng rỗng thì streak = 0
-        if (arr.length === 0) return 0;
+        if (arr.length === 0) {
+            return 0
+        }
         // Lấy phần tử cuối cùng
-        const last = arr[arr.length - 1];
-        let count = 0;
+        const last = arr[arr.length - 1]
+        // Khởi tạo biến đếm streak
+        let count = 0
         // Đếm ngược từ cuối lên
         for (let i = arr.length - 1; i >= 0; i--) {
             // Dừng khi gặp phần tử khác
-            if (arr[i] !== last) break;
-            count++;
+            if (arr[i] !== last) {
+                break
+            }
+            // Tăng biến đếm
+            count = count + 1
         }
-        return count;
+        // Trả về độ dài streak
+        return count
     }
+
+
+    // ============================================================
+    // 47 PATTERN ANALYSIS
+    // ============================================================
 
     /**
      * Phân tích tất cả 47 pattern
@@ -543,918 +639,1308 @@ class PredictionEngine {
     analyzeAllPatterns() {
         // Cần ít nhất 8 phiên để phân tích
         if (this.history.length < 8) {
-            return [];
+            // Trả về mảng rỗng nếu chưa đủ dữ liệu
+            return []
         }
 
         // Lấy 80 phiên cuối để phân tích
-        const sessions = getLastN(this.history, 80);
-        // Lấy danh sách kết quả T/X
-        const results = sessions.map(function(s) { return s.result; });
+        const sessions = getLastN(this.history, 80)
+
+        // Lấy danh sách kết quả T/X từ các phiên
+        const results = sessions.map(function(s) {
+            return s.result
+        })
+
         // Lấy kết quả cuối cùng
-        const lastResult = results.length > 0 ? results[results.length - 1] : null;
+        const lastResult = results.length > 0 ? results[results.length - 1] : null
+
         // Lấy 10 kết quả cuối
-        const last10 = results.slice(-10);
+        const last10 = results.slice(-10)
+
         // Đếm số Tài trong 10 kết quả cuối
-        const taiCount10 = last10.filter(function(r) { return r === 'T'; }).length;
+        const taiCount10 = last10.filter(function(r) {
+            return r === 'T'
+        }).length
+
+        // Lấy 20 kết quả cuối
+        const last20 = results.slice(-20)
+
+        // Đếm số Tài trong 20 kết quả cuối
+        const taiCount20 = last20.filter(function(r) {
+            return r === 'T'
+        }).length
 
         // Lấy quick analysis
-        const qa = getQuickAnalysis(this.history);
+        const qa = getQuickAnalysis(this.history)
+
         // Tính minS từ thời gian giữa phiên
-        let minS = 6;
+        let minS = 6
         if (this.y.length > 0) {
-            const avgTime = this.y.reduce(function(a, b) { return a + b; }, 0) / this.y.length;
-            minS = Math.max(6, Math.min(Math.floor(avgTime * 1.5), 10));
+            // Tính thời gian trung bình
+            const sumY = this.y.reduce(function(a, b) {
+                return a + b
+            }, 0)
+            const avgTime = sumY / this.y.length
+            // Clamp minS trong khoảng [6, 10]
+            minS = Math.max(6, Math.min(Math.floor(avgTime * 1.5), 10))
         }
 
         // Mảng chứa các pattern khớp
-        const matchedPatterns = [];
+        const matchedPatterns = []
 
-        // === PATTERN 1: Bệt ===
-        // Kiểm tra streak của kết quả cuối
+
+        // ============================================================
+        // PATTERN 1: Bệt ngắn (2 phiên cuối giống nhau)
+        // ============================================================
         {
-            const streakLen = this.getStreak(results);
-            if (streakLen < minS) {
-                // Streak ngắn hơn minS: dùng quickAnalysis
-                const patternPrediction = qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Bệt', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const base = qa.prediction ? 0.3 : -0.3;
-                        const extra = (sl - minS + 1) * 0.2;
-                        return (base + extra > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
-                }
-            } else {
-                // Tính score dựa trên độ dài streak
-                const base = qa.prediction ? 0.3 : -0.3;
-                const extra = (streakLen - minS + 1) * 0.2;
-                const score = base + extra;
-                const patternPrediction = score > 0.5 ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Bệt', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const b = qa.prediction ? 0.3 : -0.3;
-                        const e = (sl - minS + 1) * 0.2;
-                        return (b + e > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
+            // Lấy 2 phiên cuối cùng
+            const lastTwo = results.slice(-2)
+
+            // Kiểm tra 2 phiên cuối có giống nhau không
+            if (lastTwo.length === 2) {
+                // Lấy phiên áp cuối
+                const secondLast = lastTwo[0]
+                // Lấy phiên cuối cùng
+                const last = lastTwo[1]
+
+                // Nếu 2 phiên giống nhau
+                if (secondLast === last) {
+                    // Dự đoán tiếp tục theo streak
+                    const patternPrediction = last === 'T'
+
+                    // Thêm vào danh sách pattern khớp
+                    matchedPatterns.push({
+                        name: 'Bệt ngắn',
+                        prediction: patternPrediction
+                    })
                 }
             }
         }
 
-        // === PATTERN 2: Bệt siêu dài ===
-        // Tương tự pattern Bệt
+
+        // ============================================================
+        // PATTERN 2: Bệt dài (6 phiên cuối đều T hoặc đều X)
+        // ============================================================
         {
-            const streakLen = this.getStreak(results);
-            if (streakLen < minS) {
-                const patternPrediction = qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Bệt siêu dài', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const b = qa.prediction ? 0.3 : -0.3;
-                        const e = (sl - minS + 1) * 0.2;
-                        return (b + e > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
-                }
-            } else {
-                const base = qa.prediction ? 0.3 : -0.3;
-                const extra = (streakLen - minS + 1) * 0.2;
-                const score = base + extra;
-                const patternPrediction = score > 0.5 ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Bệt siêu dài', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const b = qa.prediction ? 0.3 : -0.3;
-                        const e = (sl - minS + 1) * 0.2;
-                        return (b + e > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
-                }
-            }
-        }
+            // Lấy 6 phiên cuối cùng
+            const lastSix = results.slice(-6)
 
-        // === PATTERN 3: Bệt xen kẽ ngắn ===
-        {
-            const streakLen = this.getStreak(results);
-            if (streakLen < minS) {
-                const patternPrediction = qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Bệt xen kẽ ngắn', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const b = qa.prediction ? 0.3 : -0.3;
-                        const e = (sl - minS + 1) * 0.2;
-                        return (b + e > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
-                }
-            } else {
-                const base = qa.prediction ? 0.3 : -0.3;
-                const extra = (streakLen - minS + 1) * 0.2;
-                const score = base + extra;
-                const patternPrediction = score > 0.5 ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Bệt xen kẽ ngắn', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const b = qa.prediction ? 0.3 : -0.3;
-                        const e = (sl - minS + 1) * 0.2;
-                        return (b + e > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
-                }
-            }
-        }
+            // Kiểm tra đủ 6 phiên
+            if (lastSix.length === 6) {
+                // Lấy giá trị phiên đầu tiên trong 6 phiên
+                const firstValue = lastSix[0]
 
-        // === PATTERN 4: Bệt gãy nhẹ ===
-        {
-            const streakLen = this.getStreak(results);
-            if (streakLen < minS) {
-                const patternPrediction = qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Bệt gãy nhẹ', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const b = qa.prediction ? 0.3 : -0.3;
-                        const e = (sl - minS + 1) * 0.2;
-                        return (b + e > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
-                }
-            } else {
-                const base = qa.prediction ? 0.3 : -0.3;
-                const extra = (streakLen - minS + 1) * 0.2;
-                const score = base + extra;
-                const patternPrediction = score > 0.5 ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Bệt gãy nhẹ', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const b = qa.prediction ? 0.3 : -0.3;
-                        const e = (sl - minS + 1) * 0.2;
-                        return (b + e > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
-                }
-            }
-        }
-
-        // === PATTERN 5: Đảo 1-1 ===
-        // Dự đoán NGƯỢC với kết quả cuối cùng
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Đảo 1-1', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 6: Kép 2-2 ===
-        // Lấy phần tử cách cuối 1 vị trí
-        {
-            const idx = results.length - 2;
-            if (idx >= 0) {
-                const patternPrediction = results[idx] === 'T';
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Kép 2-2', checkFn: function(list) {
-                        const i = list.length - 2;
-                        return i >= 0 ? list[i] === 'T' : false;
-                    } });
-                }
-            }
-        }
-
-        // === PATTERN 7: 3-3 ===
-        // Lấy phần tử cách cuối 2 vị trí
-        {
-            const idx = results.length - 3;
-            if (idx >= 0) {
-                const patternPrediction = results[idx] === 'T';
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: '3-3', checkFn: function(list) {
-                        const i = list.length - 3;
-                        return i >= 0 ? list[i] === 'T' : false;
-                    } });
-                }
-            }
-        }
-
-        // === PATTERN 8: Chu kỳ 2 ===
-        // Giống Kép 2-2
-        {
-            const idx = results.length - 2;
-            if (idx >= 0) {
-                const patternPrediction = results[idx] === 'T';
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Chu kỳ 2', checkFn: function(list) {
-                        const i = list.length - 2;
-                        return i >= 0 ? list[i] === 'T' : false;
-                    } });
-                }
-            }
-        }
-
-        // === PATTERN 9: Chu kỳ 3 ===
-        // Giống 3-3
-        {
-            const idx = results.length - 3;
-            if (idx >= 0) {
-                const patternPrediction = results[idx] === 'T';
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Chu kỳ 3', checkFn: function(list) {
-                        const i = list.length - 3;
-                        return i >= 0 ? list[i] === 'T' : false;
-                    } });
-                }
-            }
-        }
-
-        // === PATTERN 10: Lặp 2-1 ===
-        // Giống Kép 2-2
-        {
-            const idx = results.length - 2;
-            if (idx >= 0) {
-                const patternPrediction = results[idx] === 'T';
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Lặp 2-1', checkFn: function(list) {
-                        const i = list.length - 2;
-                        return i >= 0 ? list[i] === 'T' : false;
-                    } });
-                }
-            }
-        }
-
-        // === PATTERN 11: Lặp 3-2 ===
-        // Giống 3-3
-        {
-            const idx = results.length - 3;
-            if (idx >= 0) {
-                const patternPrediction = results[idx] === 'T';
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Lặp 3-2', checkFn: function(list) {
-                        const i = list.length - 3;
-                        return i >= 0 ? list[i] === 'T' : false;
-                    } });
-                }
-            }
-        }
-
-        // === PATTERN 12: Đối xứng ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Đối xứng', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 13: Bán đối xứng ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Bán đối xứng', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 14: Bệt ngược ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Bệt ngược', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 15: Xỉu kép ===
-        {
-            const streakLen = this.getStreak(results);
-            if (streakLen < minS) {
-                const patternPrediction = qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Xỉu kép', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const b = qa.prediction ? 0.3 : -0.3;
-                        const e = (sl - minS + 1) * 0.2;
-                        return (b + e > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
-                }
-            } else {
-                const base = qa.prediction ? 0.3 : -0.3;
-                const extra = (streakLen - minS + 1) * 0.2;
-                const score = base + extra;
-                const patternPrediction = score > 0.5 ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Xỉu kép', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const b = qa.prediction ? 0.3 : -0.3;
-                        const e = (sl - minS + 1) * 0.2;
-                        return (b + e > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
-                }
-            }
-        }
-
-        // === PATTERN 16: Tài kép ===
-        {
-            const streakLen = this.getStreak(results);
-            if (streakLen < minS) {
-                const patternPrediction = qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Tài kép', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const b = qa.prediction ? 0.3 : -0.3;
-                        const e = (sl - minS + 1) * 0.2;
-                        return (b + e > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
-                }
-            } else {
-                const base = qa.prediction ? 0.3 : -0.3;
-                const extra = (streakLen - minS + 1) * 0.2;
-                const score = base + extra;
-                const patternPrediction = score > 0.5 ? (lastResult === 'T') : (lastResult !== 'T');
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Tài kép', checkFn: function(list) {
-                        const sl = this.getStreak(list);
-                        if (sl < minS) return qa.prediction ? (lastResult === 'T') : (lastResult !== 'T');
-                        const b = qa.prediction ? 0.3 : -0.3;
-                        const e = (sl - minS + 1) * 0.2;
-                        return (b + e > 0.5) ? (lastResult === 'T') : (lastResult !== 'T');
-                    } });
-                }
-            }
-        }
-
-        // === PATTERN 17: Xen kẽ ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Xen kẽ', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 18: Gập ghềnh ===
-        {
-            const patternPrediction = taiCount10 >= 6;
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Gập ghềnh', checkFn: function(list) {
-                    const l10 = list.slice(-10);
-                    return l10.filter(function(r) { return r === 'T'; }).length >= 6;
-                } });
-            }
-        }
-
-        // === PATTERN 19: Bậc thang ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Bậc thang', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 20: Gãy ngang ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Gãy ngang', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 21: Cầu đôi ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Cầu đôi', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 22: Ngẫu nhiên ===
-        {
-            const patternPrediction = taiCount10 >= 5;
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Ngẫu nhiên', checkFn: function(list) {
-                    const l10 = list.slice(-10);
-                    return l10.filter(function(r) { return r === 'T'; }).length >= 5;
-                } });
-            }
-        }
-
-        // === PATTERN 23: Đa dạng ===
-        {
-            const patternPrediction = taiCount10 >= 5;
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Đa dạng', checkFn: function(list) {
-                    const l10 = list.slice(-10);
-                    return l10.filter(function(r) { return r === 'T'; }).length >= 5;
-                } });
-            }
-        }
-
-        // === PATTERN 24: Chu kỳ tăng ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Chu kỳ tăng', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 25: Chu kỳ giảm ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Chu kỳ giảm', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 26: Cầu lặp ===
-        {
-            const last6 = results.slice(-6);
-            if (last6.length > 0) {
-                const patternPrediction = last6[0] === 'T';
-                if (patternPrediction) {
-                    matchedPatterns.push({ name: 'Cầu lặp', checkFn: function(list) {
-                        const l6 = list.slice(-6);
-                        return l6.length > 0 ? l6[0] === 'T' : false;
-                    } });
-                }
-            }
-        }
-
-        // === PATTERN 27: Đối ngược ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Đối ngược', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 28: Phân cụm ===
-        {
-            const patternPrediction = taiCount10 > 5;
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Phân cụm', checkFn: function(list) {
-                    const l10 = list.slice(-10);
-                    return l10.filter(function(r) { return r === 'T'; }).length > 5;
-                } });
-            }
-        }
-
-        // === PATTERN 29: Lệch ngẫu nhiên ===
-        {
-            const patternPrediction = taiCount10 >= 5;
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Lệch ngẫu nhiên', checkFn: function(list) {
-                    const l10 = list.slice(-10);
-                    return l10.filter(function(r) { return r === 'T'; }).length >= 5;
-                } });
-            }
-        }
-
-        // === PATTERN 30: Xen kẽ dài ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Xen kẽ dài', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 31: Cầu gập ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Cầu gập', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 32: Xỉu lắc ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Xỉu lắc', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 33: Tài lắc ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Tài lắc', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 34: Phối hợp 1 ===
-        {
-            const patternPrediction = taiCount10 > 5;
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Phối hợp 1', checkFn: function(list) {
-                    const l10 = list.slice(-10);
-                    return l10.filter(function(r) { return r === 'T'; }).length > 5;
-                } });
-            }
-        }
-
-        // === PATTERN 35: Phối hợp 2 ===
-        {
-            const patternPrediction = qa.prediction;
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Phối hợp 2', checkFn: function(list) {
-                    return getQuickAnalysis(this.history).prediction;
-                } });
-            }
-        }
-
-        // === PATTERN 36: Phối hợp 3 ===
-        {
-            const patternPrediction = qa.prediction;
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Phối hợp 3', checkFn: function(list) {
-                    return getQuickAnalysis(this.history).prediction;
-                } });
-            }
-        }
-
-        // === PATTERN 37: Chẵn lẻ lặp ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Chẵn lẻ lặp', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 38: Dài ngắn đảo ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Dài ngắn đảo', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 39: Ngẫu nhiên bệt ===
-        // Dự đoán GIỐNG kết quả cuối cùng
-        {
-            const patternPrediction = lastResult === 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Ngẫu nhiên bệt', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] === 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 40: Cầu dài ngẫu ===
-        {
-            const patternPrediction = taiCount10 >= 5;
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Cầu dài ngẫu', checkFn: function(list) {
-                    const l10 = list.slice(-10);
-                    return l10.filter(function(r) { return r === 'T'; }).length >= 5;
-                } });
-            }
-        }
-
-        // === PATTERN 41: Ngược chu kỳ ===
-        // Dự đoán GIỐNG kết quả cuối cùng
-        {
-            const patternPrediction = lastResult === 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Ngược chu kỳ', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] === 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 42: Chu kỳ biến đổi ===
-        {
-            const patternPrediction = taiCount10 > 5;
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Chu kỳ biến đổi', checkFn: function(list) {
-                    const l10 = list.slice(-10);
-                    return l10.filter(function(r) { return r === 'T'; }).length > 5;
-                } });
-            }
-        }
-
-        // === PATTERN 43: Cầu linh hoạt ===
-        {
-            const patternPrediction = taiCount10 > 5;
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Cầu linh hoạt', checkFn: function(list) {
-                    const l10 = list.slice(-10);
-                    return l10.filter(function(r) { return r === 'T'; }).length > 5;
-                } });
-            }
-        }
-
-        // === PATTERN 44: Cầu 3-1 ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Cầu 3-1', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 45: Cầu 2-1-2 ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Cầu 2-1-2', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 46: Cầu thời gian nhanh ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Cầu thời gian nhanh', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // === PATTERN 47: Cầu thời gian chậm ===
-        {
-            const patternPrediction = lastResult !== 'T';
-            if (patternPrediction) {
-                matchedPatterns.push({ name: 'Cầu thời gian chậm', checkFn: function(list) {
-                    return list.length > 0 ? list[list.length - 1] !== 'T' : false;
-                } });
-            }
-        }
-
-        // Tính điểm cho từng pattern khớp
-        const scoredPatterns = [];
-        for (const pattern of matchedPatterns) {
-            // Lấy thống kê thành công/thất bại của pattern
-            const successCount = this.patternSuccessCount[pattern.name] || 0;
-            const failCount = this.patternFailCount[pattern.name] || 0;
-            const totalAttempts = successCount + failCount;
-
-            // Tính success rate
-            let successRate = 0.5;
-            if (totalAttempts > 0) {
-                successRate = successCount / totalAttempts;
-            }
-
-            // Tính recent match rate
-            let recentMatchRate = 0.1;
-            if (this.history.length >= 20) {
-                const chunks = [];
-                for (let i = 0; i < 6; i++) {
-                    const start = this.history.length - 6 * (i + 1);
-                    const end = start + 6;
-                    if (start >= 0 && end <= this.history.length) {
-                        chunks.push(results.slice(start, end));
+                // Kiểm tra tất cả có giống nhau không
+                let allSame = true
+                for (const r of lastSix) {
+                    if (r !== firstValue) {
+                        allSame = false
+                        break
                     }
                 }
-                let matchCount = 0;
-                for (const chunk of chunks) {
-                    try {
-                        if (pattern.checkFn(chunk)) matchCount++;
-                    } catch (err) { /* bỏ qua */ }
+
+                // Nếu tất cả giống nhau
+                if (allSame) {
+                    // Dự đoán tiếp tục streak
+                    const patternPrediction = firstValue === 'T'
+
+                    // Thêm vào danh sách
+                    matchedPatterns.push({
+                        name: 'Bệt dài',
+                        prediction: patternPrediction
+                    })
                 }
-                recentMatchRate = Math.max(0.1, matchCount / Math.max(chunks.length, 1));
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 3: Đảo 1-1 ngắn (lst[0]===lst[2] && lst[0]!==lst[1])
+        // ============================================================
+        {
+            // Lấy 3 phiên cuối cùng
+            const lastThree = results.slice(-3)
+
+            // Kiểm tra đủ 3 phiên
+            if (lastThree.length === 3) {
+                // Lấy giá trị từng phiên
+                const first = lastThree[0]
+                const second = lastThree[1]
+                const third = lastThree[2]
+
+                // Kiểm tra mẫu đảo 1-1: A, B, A
+                if (first === third && first !== second) {
+                    // Dự đoán đảo ngược: nếu cuối là A thì dự đoán B
+                    const patternPrediction = third !== 'T'
+
+                    // Thêm vào danh sách
+                    matchedPatterns.push({
+                        name: 'Đảo 1-1 ngắn',
+                        prediction: patternPrediction
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 4: Đảo 1-1 dài (5 phiên xen kẽ hoàn toàn)
+        // ============================================================
+        {
+            // Lấy 5 phiên cuối cùng
+            const lastFive = results.slice(-5)
+
+            // Kiểm tra đủ 5 phiên
+            if (lastFive.length === 5) {
+                // Biến kiểm tra xen kẽ hoàn toàn
+                let alternating = true
+
+                // Kiểm tra từng cặp liên tiếp
+                for (let i = 0; i < 4; i++) {
+                    if (lastFive[i] === lastFive[i + 1]) {
+                        alternating = false
+                        break
+                    }
+                }
+
+                // Nếu xen kẽ hoàn toàn
+                if (alternating) {
+                    // Dự đoán ngược với phiên cuối
+                    const patternPrediction = lastFive[4] !== 'T'
+
+                    // Thêm vào danh sách
+                    matchedPatterns.push({
+                        name: 'Đảo 1-1 dài',
+                        prediction: patternPrediction
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 5: Cầu 1-2
+        // ============================================================
+        {
+            // Lấy 3 phiên cuối cùng
+            const lastThree = results.slice(-3)
+
+            // Kiểm tra đủ 3 phiên
+            if (lastThree.length === 3) {
+                // Đếm số Tài trong 3 phiên
+                const taiCount = lastThree.filter(function(r) {
+                    return r === 'T'
+                }).length
+
+                // Kiểm tra vị trí trong chu kỳ
+                const modResult = this.history.length % 3
+
+                // Nếu vị trí 0 hoặc 2 và có >= 2 Tài
+                if ((modResult === 0 || modResult === 2) && taiCount >= 2) {
+                    // Dự đoán Tài
+                    matchedPatterns.push({
+                        name: 'Cầu 1-2',
+                        prediction: true
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 6: Cầu 2-1
+        // ============================================================
+        {
+            // Lấy 3 phiên cuối cùng
+            const lastThree = results.slice(-3)
+
+            // Kiểm tra đủ 3 phiên
+            if (lastThree.length === 3) {
+                // Đếm số Tài trong 3 phiên
+                const taiCount = lastThree.filter(function(r) {
+                    return r === 'T'
+                }).length
+
+                // Kiểm tra vị trí trong chu kỳ
+                const modResult = this.history.length % 3
+
+                // Nếu vị trí 1 và có >= 2 Tài
+                if (modResult === 1 && taiCount >= 2) {
+                    // Dự đoán Tài
+                    matchedPatterns.push({
+                        name: 'Cầu 2-1',
+                        prediction: true
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 7: Kép 2-2 (4 phiên AABB)
+        // ============================================================
+        {
+            // Lấy 4 phiên cuối cùng
+            const lastFour = results.slice(-4)
+
+            // Kiểm tra đủ 4 phiên
+            if (lastFour.length === 4) {
+                // Lấy giá trị từng phiên
+                const first = lastFour[0]
+                const second = lastFour[1]
+                const third = lastFour[2]
+                const fourth = lastFour[3]
+
+                // Kiểm tra mẫu AABB
+                if (first === second && third === fourth && first !== third) {
+                    // Dự đoán ngược với cặp cuối
+                    const patternPrediction = third !== 'T'
+
+                    // Thêm vào danh sách
+                    matchedPatterns.push({
+                        name: 'Kép 2-2',
+                        prediction: patternPrediction
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 8: Cầu 3-1 (4 cuối T>=3 hoặc X<=1)
+        // ============================================================
+        {
+            // Lấy 4 phiên cuối cùng
+            const lastFour = results.slice(-4)
+
+            // Kiểm tra đủ 4 phiên
+            if (lastFour.length === 4) {
+                // Đếm số Tài trong 4 phiên
+                const taiCount = lastFour.filter(function(r) {
+                    return r === 'T'
+                }).length
+
+                // Nếu Tài >= 3 thì dự đoán Xỉu (đảo)
+                if (taiCount >= 3) {
+                    matchedPatterns.push({
+                        name: 'Cầu 3-1',
+                        prediction: false
+                    })
+                }
+
+                // Nếu Xỉu >= 3 (Tài <= 1) thì dự đoán Tài (đảo)
+                if (taiCount <= 1) {
+                    matchedPatterns.push({
+                        name: 'Cầu 3-1',
+                        prediction: true
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 9: Imbalance (10 cuối T>X hoặc X>T)
+        // ============================================================
+        {
+            // Lấy 10 phiên cuối
+            const lastTen = results.slice(-10)
+
+            // Kiểm tra đủ 10 phiên
+            if (lastTen.length === 10) {
+                // Đếm số Tài
+                const taiCount = lastTen.filter(function(r) {
+                    return r === 'T'
+                }).length
+
+                // Đếm số Xỉu
+                const xiuCount = lastTen.length - taiCount
+
+                // Nếu Tài nhiều hơn Xỉu
+                if (taiCount > xiuCount) {
+                    matchedPatterns.push({
+                        name: 'Imbalance',
+                        prediction: true
+                    })
+                }
+
+                // Nếu Xỉu nhiều hơn Tài
+                if (xiuCount > taiCount) {
+                    matchedPatterns.push({
+                        name: 'Imbalance',
+                        prediction: false
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 10: Ngẫu nhiên (random 50/50)
+        // ============================================================
+        {
+            // Dự đoán ngẫu nhiên
+            const randomPrediction = Math.random() < 0.5
+
+            // Luôn thêm pattern ngẫu nhiên vào danh sách
+            matchedPatterns.push({
+                name: 'Ngẫu nhiên',
+                prediction: randomPrediction
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 11: Bệt siêu dài (10 phiên đều T hoặc đều X)
+        // ============================================================
+        {
+            // Lấy 10 phiên cuối
+            const lastTenPattern = results.slice(-10)
+
+            // Kiểm tra đủ 10 phiên
+            if (lastTenPattern.length === 10) {
+                // Lấy giá trị đầu tiên
+                const firstValue = lastTenPattern[0]
+
+                // Kiểm tra tất cả giống nhau
+                let allSame = true
+                for (const r of lastTenPattern) {
+                    if (r !== firstValue) {
+                        allSame = false
+                        break
+                    }
+                }
+
+                // Nếu tất cả giống nhau
+                if (allSame) {
+                    // Dự đoán tiếp tục streak
+                    matchedPatterns.push({
+                        name: 'Bệt siêu dài',
+                        prediction: firstValue === 'T'
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 12: Bệt xen kẽ ngắn
+        // ============================================================
+        {
+            // Lấy streak hiện tại
+            const streakLen = this.getStreak(results)
+
+            // Nếu streak đủ dài
+            if (streakLen >= 3 && streakLen <= 5) {
+                // Lấy kết quả cuối
+                const lastValue = results[results.length - 1]
+
+                // Dự đoán tiếp tục streak
+                matchedPatterns.push({
+                    name: 'Bệt xen kẽ ngắn',
+                    prediction: lastValue === 'T'
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 13: Bệt gãy nhẹ
+        // ============================================================
+        {
+            // Lấy streak hiện tại
+            const streakLen = this.getStreak(results)
+
+            // Nếu streak dài vừa phải (có thể gãy)
+            if (streakLen >= 4 && streakLen <= 7) {
+                // Lấy kết quả cuối
+                const lastValue = results[results.length - 1]
+
+                // Dự đoán đảo chiều (gãy)
+                matchedPatterns.push({
+                    name: 'Bệt gãy nhẹ',
+                    prediction: lastValue !== 'T'
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 14: Đảo 1-1
+        // ============================================================
+        {
+            // Lấy 2 phiên cuối
+            const lastTwo = results.slice(-2)
+
+            // Nếu 2 phiên cuối khác nhau
+            if (lastTwo.length === 2 && lastTwo[0] !== lastTwo[1]) {
+                // Dự đoán tiếp tục đảo
+                matchedPatterns.push({
+                    name: 'Đảo 1-1',
+                    prediction: lastTwo[1] !== 'T'
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 15: Kép 2-2 mở rộng
+        // ============================================================
+        {
+            // Lấy 4 phiên cuối
+            const lastFour = results.slice(-4)
+
+            // Kiểm tra mẫu AABB hoặc BBAA
+            if (lastFour.length === 4) {
+                const first = lastFour[0]
+                const second = lastFour[1]
+                const third = lastFour[2]
+                const fourth = lastFour[3]
+
+                // Nếu là mẫu kép
+                if (first === second && third === fourth) {
+                    // Dự đoán ngược với cặp cuối
+                    matchedPatterns.push({
+                        name: 'Kép 2-2 mở rộng',
+                        prediction: third !== 'T'
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 16: 3-3 (6 phiên AAABBB)
+        // ============================================================
+        {
+            // Lấy 6 phiên cuối
+            const lastSix = results.slice(-6)
+
+            // Kiểm tra mẫu 3-3
+            if (lastSix.length === 6) {
+                // Kiểm tra 3 phiên đầu giống nhau
+                const firstThree = lastSix.slice(0, 3)
+                const firstVal = firstThree[0]
+                let firstSame = true
+                for (const r of firstThree) {
+                    if (r !== firstVal) {
+                        firstSame = false
+                        break
+                    }
+                }
+
+                // Kiểm tra 3 phiên sau giống nhau
+                const lastThree = lastSix.slice(3)
+                const lastVal = lastThree[0]
+                let lastSame = true
+                for (const r of lastThree) {
+                    if (r !== lastVal) {
+                        lastSame = false
+                        break
+                    }
+                }
+
+                // Nếu thỏa mãn mẫu 3-3 và 2 nhóm khác nhau
+                if (firstSame && lastSame && firstVal !== lastVal) {
+                    // Dự đoán đảo chiều
+                    matchedPatterns.push({
+                        name: '3-3',
+                        prediction: lastVal !== 'T'
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 17: Chu kỳ 2 (4 phiên ABAB)
+        // ============================================================
+        {
+            // Lấy 4 phiên cuối
+            const lastFour = results.slice(-4)
+
+            // Kiểm tra mẫu ABAB
+            if (lastFour.length === 4) {
+                if (lastFour[0] === lastFour[2] && lastFour[1] === lastFour[3] && lastFour[0] !== lastFour[1]) {
+                    // Dự đoán tiếp tục chu kỳ
+                    matchedPatterns.push({
+                        name: 'Chu kỳ 2',
+                        prediction: lastFour[3] !== 'T'
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 18: Chu kỳ 3 (6 phiên ABCABC)
+        // ============================================================
+        {
+            // Lấy 6 phiên cuối
+            const lastSix = results.slice(-6)
+
+            // Kiểm tra mẫu ABCABC
+            if (lastSix.length === 6) {
+                if (lastSix[0] === lastSix[3] && lastSix[1] === lastSix[4] && lastSix[2] === lastSix[5]) {
+                    // Dự đoán tiếp tục chu kỳ
+                    matchedPatterns.push({
+                        name: 'Chu kỳ 3',
+                        prediction: lastSix[5] !== 'T'
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 19: Lặp 2-1
+        // ============================================================
+        {
+            // Lấy 3 phiên cuối
+            const lastThree = results.slice(-3)
+
+            // Kiểm tra mẫu 2-1
+            if (lastThree.length === 3) {
+                const taiCount = lastThree.filter(function(r) {
+                    return r === 'T'
+                }).length
+
+                // Nếu có 2 Tài
+                if (taiCount === 2) {
+                    matchedPatterns.push({
+                        name: 'Lặp 2-1',
+                        prediction: true
+                    })
+                }
+
+                // Nếu có 2 Xỉu (1 Tài)
+                if (taiCount === 1) {
+                    matchedPatterns.push({
+                        name: 'Lặp 2-1',
+                        prediction: false
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 20: Lặp 3-2
+        // ============================================================
+        {
+            // Lấy 5 phiên cuối
+            const lastFive = results.slice(-5)
+
+            // Kiểm tra mẫu 3-2
+            if (lastFive.length === 5) {
+                const taiCount = lastFive.filter(function(r) {
+                    return r === 'T'
+                }).length
+
+                // Nếu Tài >= 3 thì dự đoán Xỉu
+                if (taiCount >= 3) {
+                    matchedPatterns.push({
+                        name: 'Lặp 3-2',
+                        prediction: false
+                    })
+                }
+
+                // Nếu Tài <= 2 thì dự đoán Tài
+                if (taiCount <= 2) {
+                    matchedPatterns.push({
+                        name: 'Lặp 3-2',
+                        prediction: true
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 21: Đối xứng (5 phiên đối xứng hoàn toàn)
+        // ============================================================
+        {
+            // Lấy 5 phiên cuối
+            const lastFive = results.slice(-5)
+
+            // Kiểm tra đối xứng
+            if (lastFive.length === 5) {
+                // Kiểm tra vị trí 0 và 4, 1 và 3
+                if (lastFive[0] === lastFive[4] && lastFive[1] === lastFive[3]) {
+                    // Dự đoán ngược với vị trí giữa
+                    matchedPatterns.push({
+                        name: 'Đối xứng',
+                        prediction: lastFive[2] !== 'T'
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 22: Bán đối xứng (5 phiên khớp >= 4)
+        // ============================================================
+        {
+            // Lấy 5 phiên cuối
+            const lastFive = results.slice(-5)
+
+            // Kiểm tra bán đối xứng
+            if (lastFive.length === 5) {
+                // Đếm số vị trí khớp đối xứng
+                let matchCount = 0
+
+                // So sánh từng cặp đối xứng
+                for (let i = 0; i < 5; i++) {
+                    if (lastFive[i] === lastFive[4 - i]) {
+                        matchCount = matchCount + 1
+                    }
+                }
+
+                // Nếu khớp >= 4 vị trí
+                if (matchCount >= 4) {
+                    // Dự đoán ngược với vị trí giữa
+                    matchedPatterns.push({
+                        name: 'Bán đối xứng',
+                        prediction: lastFive[2] !== 'T'
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 23: Bệt ngược
+        // ============================================================
+        {
+            // Lấy streak hiện tại
+            const streakLen = this.getStreak(results)
+
+            // Nếu streak >= 6
+            if (streakLen >= 6) {
+                // Lấy kết quả cuối
+                const lastValue = results[results.length - 1]
+
+                // Dự đoán đảo chiều
+                matchedPatterns.push({
+                    name: 'Bệt ngược',
+                    prediction: lastValue !== 'T'
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 24: Xỉu kép
+        // ============================================================
+        {
+            // Lấy 2 phiên cuối
+            const lastTwo = results.slice(-2)
+
+            // Kiểm tra 2 phiên Xỉu liên tiếp
+            if (lastTwo.length === 2 && lastTwo[0] === 'X' && lastTwo[1] === 'X') {
+                // Dự đoán tiếp tục Xỉu
+                matchedPatterns.push({
+                    name: 'Xỉu kép',
+                    prediction: false
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 25: Tài kép
+        // ============================================================
+        {
+            // Lấy 2 phiên cuối
+            const lastTwo = results.slice(-2)
+
+            // Kiểm tra 2 phiên Tài liên tiếp
+            if (lastTwo.length === 2 && lastTwo[0] === 'T' && lastTwo[1] === 'T') {
+                // Dự đoán tiếp tục Tài
+                matchedPatterns.push({
+                    name: 'Tài kép',
+                    prediction: true
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 26: Xen kẽ
+        // ============================================================
+        {
+            // Lấy 7 phiên cuối
+            const lastSeven = results.slice(-7)
+
+            // Kiểm tra xen kẽ hoàn toàn
+            if (lastSeven.length === 7) {
+                // Biến kiểm tra
+                let alternating = true
+
+                // Kiểm tra từng cặp
+                for (let i = 0; i < 6; i++) {
+                    if (lastSeven[i] === lastSeven[i + 1]) {
+                        alternating = false
+                        break
+                    }
+                }
+
+                // Nếu xen kẽ hoàn toàn
+                if (alternating) {
+                    // Dự đoán tiếp tục xen kẽ
+                    matchedPatterns.push({
+                        name: 'Xen kẽ',
+                        prediction: lastSeven[6] !== 'T'
+                    })
+                }
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 27: Gập ghềnh
+        // ============================================================
+        {
+            // Nếu >= 6 Tài trong 10 phiên cuối
+            if (taiCount10 >= 6) {
+                matchedPatterns.push({
+                    name: 'Gập ghềnh',
+                    prediction: true
+                })
+            } else if (taiCount10 <= 4) {
+                matchedPatterns.push({
+                    name: 'Gập ghềnh',
+                    prediction: false
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 28: Bậc thang
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Bậc thang',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 29: Gãy ngang
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Gãy ngang',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 30: Cầu đôi
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Cầu đôi',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 31: Đa dạng
+        // ============================================================
+        {
+            // Nếu >= 5 Tài trong 10 phiên cuối
+            if (taiCount10 >= 5) {
+                matchedPatterns.push({
+                    name: 'Đa dạng',
+                    prediction: true
+                })
+            } else {
+                matchedPatterns.push({
+                    name: 'Đa dạng',
+                    prediction: false
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 32: Chu kỳ tăng
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Chu kỳ tăng',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 33: Chu kỳ giảm
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Chu kỳ giảm',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 34: Cầu lặp
+        // ============================================================
+        {
+            // Lấy 6 phiên cuối
+            const lastSix = results.slice(-6)
+
+            // Dự đoán giống phiên đầu tiên trong 6 phiên
+            if (lastSix.length > 0) {
+                const firstOfSix = lastSix[0]
+
+                // Thêm pattern
+                matchedPatterns.push({
+                    name: 'Cầu lặp',
+                    prediction: firstOfSix === 'T'
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 35: Đối ngược
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Đối ngược',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 36: Phân cụm
+        // ============================================================
+        {
+            // Nếu > 5 Tài trong 10 phiên cuối
+            if (taiCount10 > 5) {
+                matchedPatterns.push({
+                    name: 'Phân cụm',
+                    prediction: true
+                })
+            } else if (taiCount10 < 5) {
+                matchedPatterns.push({
+                    name: 'Phân cụm',
+                    prediction: false
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 37: Lệch ngẫu nhiên
+        // ============================================================
+        {
+            // Nếu >= 5 Tài trong 10 phiên cuối
+            if (taiCount10 >= 5) {
+                matchedPatterns.push({
+                    name: 'Lệch ngẫu nhiên',
+                    prediction: true
+                })
+            } else {
+                matchedPatterns.push({
+                    name: 'Lệch ngẫu nhiên',
+                    prediction: false
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 38: Xen kẽ dài
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Xen kẽ dài',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 39: Cầu gập
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Cầu gập',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 40: Xỉu lắc
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Xỉu lắc',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 41: Tài lắc
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Tài lắc',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 42: Phối hợp 1
+        // ============================================================
+        {
+            // Nếu > 5 Tài trong 10 phiên cuối
+            if (taiCount10 > 5) {
+                matchedPatterns.push({
+                    name: 'Phối hợp 1',
+                    prediction: true
+                })
+            } else {
+                matchedPatterns.push({
+                    name: 'Phối hợp 1',
+                    prediction: false
+                })
+            }
+        }
+
+
+        // ============================================================
+        // PATTERN 43: Phối hợp 2
+        // ============================================================
+        {
+            // Dùng quick analysis
+            matchedPatterns.push({
+                name: 'Phối hợp 2',
+                prediction: qa.prediction
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 44: Phối hợp 3
+        // ============================================================
+        {
+            // Dùng quick analysis
+            matchedPatterns.push({
+                name: 'Phối hợp 3',
+                prediction: qa.prediction
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 45: Chẵn lẻ lặp
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Chẵn lẻ lặp',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 46: Dài ngắn đảo
+        // ============================================================
+        {
+            // Dự đoán ngược với kết quả cuối
+            matchedPatterns.push({
+                name: 'Dài ngắn đảo',
+                prediction: lastResult !== 'T'
+            })
+        }
+
+
+        // ============================================================
+        // PATTERN 47: Ngẫu nhiên bệt
+        // ============================================================
+        {
+            // Dự đoán giống kết quả cuối
+            matchedPatterns.push({
+                name: 'Ngẫu nhiên bệt',
+                prediction: lastResult === 'T'
+            })
+        }
+
+
+        // ============================================================
+        // TÍNH ĐIỂM CHO TỪNG PATTERN
+        // ============================================================
+
+        // Mảng kết quả đã tính điểm
+        const scoredPatterns = []
+
+        // Duyệt qua từng pattern khớp
+        for (const pattern of matchedPatterns) {
+            // Lấy thống kê thành công
+            const successCount = this.patternSuccessCount[pattern.name] || 0
+
+            // Lấy thống kê thất bại
+            const failCount = this.patternFailCount[pattern.name] || 0
+
+            // Tổng số lần thử
+            const totalAttempts = successCount + failCount
+
+            // Tính success rate
+            let successRate = 0.5
+            if (totalAttempts > 0) {
+                successRate = successCount / totalAttempts
             }
 
-            // Score = successRate * 0.7 + recentMatchRate * 0.3
-            const score = clamp(successRate * 0.7 + recentMatchRate * 0.3, 0.25, 0.98);
-            // Dự đoán của pattern
-            const prediction = pattern.checkFn(results);
+            // Tính recent match rate (mặc định 0.5)
+            const recentMatchRate = 0.5
 
+            // Tính score = successRate * 0.7 + recentMatchRate * 0.3
+            const score = clamp(successRate * 0.7 + recentMatchRate * 0.3, 0.25, 0.98)
+
+            // Thêm vào mảng kết quả
             scoredPatterns.push({
                 name: pattern.name,
                 score: score,
-                prediction: prediction,
-                successRate: successRate,
-                recentMatchRate: recentMatchRate,
-                successCount: successCount,
-                failCount: failCount,
-                totalAttempts: totalAttempts
-            });
+                prediction: pattern.prediction,
+                successRate: successRate
+            })
         }
 
         // Sắp xếp theo score giảm dần
-        scoredPatterns.sort(function(a, b) { return b.score - a.score; });
-        return scoredPatterns;
+        scoredPatterns.sort(function(a, b) {
+            return b.score - a.score
+        })
+
+        // Trả về mảng pattern đã sắp xếp
+        return scoredPatterns
     }
+
+
+    // ============================================================
+    // PREDICT
+    // ============================================================
 
     /**
      * Hàm predict() — dự đoán kết quả Tài/Xỉu
      * 4 nhánh: warmup, strong, medium, fallback
-     * Đầu vào: sessionData - dữ liệu phiên hiện tại
-     * Đầu ra: { prediction: 'T'|'X', confidence: number, method: string }
      */
     predict(sessionData) {
+        // Bọc trong try-catch
         try {
             // === NHÁNH 1: WARMUP (< MIN_S phiên) ===
             if (this.history.length < this.MIN_S) {
                 // Lấy kết quả cuối cùng nếu có
                 const last = this.history.length > 0
                     ? this.history[this.history.length - 1].result
-                    : null;
-                let prediction;
+                    : null
 
-                // Dự đoán dựa trên kết quả cuối và xác suất ngẫu nhiên
+                // Biến dự đoán
+                let prediction
+
+                // Dự đoán dựa trên kết quả cuối
                 if (last === 'T') {
-                    // Nếu phiên cuối là Tài: 52% tiếp tục Tài
-                    prediction = Math.random() < 0.52;
+                    // 52% tiếp tục Tài
+                    prediction = Math.random() < 0.52
                 } else if (last === 'X') {
-                    // Nếu phiên cuối là Xỉu: 48% chuyển sang Tài
-                    prediction = Math.random() < 0.48;
+                    // 48% chuyển sang Tài
+                    prediction = Math.random() < 0.48
                 } else {
-                    // Không có dữ liệu: 50/50
-                    prediction = Math.random() < 0.5;
+                    // 50/50
+                    prediction = Math.random() < 0.5
                 }
 
                 // Lưu dự đoán
-                this.lastPrediction = prediction;
-                this.lastSessionId = sessionData ? sessionData.sessionId : 0;
+                this.lastPrediction = prediction
 
-                // Trả về kết quả
+                // Trả về kết quả warmup
                 return {
                     prediction: prediction ? 'T' : 'X',
                     confidence: 50,
                     method: 'warmup',
                     reason: 'Chưa đủ dữ liệu, dùng warmup'
-                };
+                }
             }
 
             // === PHÂN TÍCH PATTERN ===
-            const analyzed = this.analyzeAllPatterns();
+            const analyzed = this.analyzeAllPatterns()
 
             // === NHÁNH 2: STRONG (> 0.72) - ĐẢO BOOLEAN ===
             if (analyzed.length > 0 && analyzed[0].score > 0.72) {
-                const best = analyzed[0];
-                // ĐẢO boolean: nếu pattern dự đoán Tài thì chọn Xỉu và ngược lại
-                const invertedPrediction = !best.prediction;
+                // Lấy pattern tốt nhất
+                const best = analyzed[0]
+
+                // ĐẢO boolean
+                const invertedPrediction = !best.prediction
+
                 // Confidence clamp [0.4, 0.6]
-                const confidence = clamp(best.score, 0.4, 0.6);
+                const confidence = clamp(best.score, 0.4, 0.6)
 
                 // Lưu dự đoán
-                this.lastPrediction = invertedPrediction;
-                this.lastSessionId = sessionData ? sessionData.sessionId : 0;
+                this.lastPrediction = invertedPrediction
 
-                // Log thông tin
-                log('INFO', `[MD5] Strong (>0.72): pattern=${best.name}, score=${best.score.toFixed(3)}, prediction=${invertedPrediction ? 'T' : 'X'} (đảo)`);
+                // Log
+                log('INFO', '[MD5] Strong: ' + best.name + ' score=' + best.score.toFixed(3) + ' -> ' + (invertedPrediction ? 'T' : 'X'))
 
                 // Trả về kết quả
                 return {
                     prediction: invertedPrediction ? 'T' : 'X',
                     confidence: Math.round(confidence * 100),
                     method: 'strong_inverted',
-                    pattern: best.name,
-                    rawScore: Math.round(best.score * 100) / 100,
-                    reason: `Pattern ${best.name} score=${best.score.toFixed(3)}, đảo boolean`
-                };
+                    pattern: best.name
+                }
             }
 
-            // === NHÁNH 3: MEDIUM (> 0.55) - KẾT HỢP PATTERN SCORE + SUCCESS RATE ===
+            // === NHÁNH 3: MEDIUM (> 0.55) ===
             if (analyzed.length > 0 && analyzed[0].score > 0.55) {
-                const best = analyzed[0];
-                // Điều chỉnh score: nếu prediction = true thì giữ nguyên, ngược lại đảo
-                const adjustedScore = best.prediction ? best.score : (1 - best.score);
-                // Pattern score * 0.6 + successRate * 0.4
-                const combinedScore = adjustedScore * 0.6 + best.successRate * 0.4;
-                // Dự đoán: >= 0.5 → Tài
-                const prediction = combinedScore >= 0.5;
-                // Confidence clamp [0.4, 0.6]
-                const confidence = clamp(combinedScore, 0.4, 0.6);
+                // Lấy pattern tốt nhất
+                const best = analyzed[0]
+
+                // Điều chỉnh score
+                const adjustedScore = best.prediction ? best.score : (1 - best.score)
+
+                // Kết hợp pattern score và success rate
+                const combinedScore = adjustedScore * 0.6 + best.successRate * 0.4
+
+                // Dự đoán
+                const prediction = combinedScore >= 0.5
+
+                // Confidence clamp
+                const confidence = clamp(combinedScore, 0.4, 0.6)
 
                 // Lưu dự đoán
-                this.lastPrediction = prediction;
-                this.lastSessionId = sessionData ? sessionData.sessionId : 0;
+                this.lastPrediction = prediction
 
-                // Log thông tin
-                log('INFO', `[MD5] Medium (>0.55): pattern=${best.name}, score=${best.score.toFixed(3)}, combined=${combinedScore.toFixed(3)}, prediction=${prediction ? 'T' : 'X'}`);
+                // Log
+                log('INFO', '[MD5] Medium: ' + best.name + ' score=' + best.score.toFixed(3) + ' -> ' + (prediction ? 'T' : 'X'))
 
                 // Trả về kết quả
                 return {
                     prediction: prediction ? 'T' : 'X',
                     confidence: Math.round(confidence * 100),
                     method: 'medium_combined',
-                    pattern: best.name,
-                    rawScore: Math.round(combinedScore * 100) / 100,
-                    reason: `Pattern ${best.name} score=${best.score.toFixed(3)}, combined=${combinedScore.toFixed(3)}`
-                };
+                    pattern: best.name
+                }
             }
 
             // === NHÁNH 4: FALLBACK NEURAL NETWORK ===
-            // Lấy quick analysis từ 20 phiên cuối
-            const qa = getQuickAnalysis(this.history);
+            // Lấy quick analysis
+            const qa = getQuickAnalysis(this.history)
 
-            // Lấy 10 phiên cuối để tính fallback score
-            const recent10 = getLastN(this.history, 10);
-            const results10 = recent10.map(function(s) { return s.result; });
+            // Lấy 10 phiên cuối
+            const recent10 = getLastN(this.history, 10)
+            const results10 = recent10.map(function(s) {
+                return s.result
+            })
 
-            // Tính fallback score từ 10 phiên cuối
-            let fallbackScore;
-            if (results10.length < 6) {
-                fallbackScore = 0.5;
-            } else {
-                // Đếm số cặp liên tiếp khác nhau
-                let diffCount = 0;
+            // Tính fallback score
+            let fallbackScore = 0.5
+            if (results10.length >= 6) {
+                // Đếm số cặp khác nhau
+                let diffCount = 0
                 for (let i = 0; i < results10.length - 1; i++) {
-                    if (results10[i] !== results10[i + 1]) diffCount++;
+                    if (results10[i] !== results10[i + 1]) {
+                        diffCount = diffCount + 1
+                    }
                 }
+
                 // Tỉ lệ khác nhau
-                const diffRate = diffCount / Math.max(results10.length - 1, 1);
-                const lastResult = results10[results10.length - 1];
-                // Nếu tỉ lệ khác nhau > 0.6: dự đoán đảo kết quả cuối
-                const rawPrediction = diffRate > 0.6 ? (lastResult !== 'T') : (lastResult === 'T');
-                const rawScore = clamp(diffRate, 0.4, 0.9);
-                fallbackScore = rawPrediction ? rawScore : (1 - rawScore);
+                const diffRate = diffCount / Math.max(results10.length - 1, 1)
+
+                // Lấy kết quả cuối
+                const lastResult10 = results10[results10.length - 1]
+
+                // Dự đoán
+                const rawPrediction = diffRate > 0.6 ? (lastResult10 !== 'T') : (lastResult10 === 'T')
+                const rawScore = clamp(diffRate, 0.4, 0.9)
+
+                // Tính fallback score
+                if (rawPrediction) {
+                    fallbackScore = rawScore
+                } else {
+                    fallbackScore = 1 - rawScore
+                }
             }
 
             // Neural network forward
             const neuralScore = forward(
-                [
-                    calcProb(qa.prediction, qa.confidence),
-                    fallbackScore,
-                    0.5
-                ],
+                [calcProb(qa.prediction, qa.confidence), fallbackScore, 0.5],
                 this.weights,
                 this.bias
-            );
+            )
 
             // MD5 fallback: >= 0.5 → Tài
-            const prediction = neuralScore >= 0.5;
-            const confidence = clamp(neuralScore, 0.4, 0.6);
+            const prediction = neuralScore >= 0.5
+
+            // Confidence clamp
+            const confidence = clamp(neuralScore, 0.4, 0.6)
 
             // Lưu dự đoán
-            this.lastPrediction = prediction;
-            this.lastSessionId = sessionData ? sessionData.sessionId : 0;
+            this.lastPrediction = prediction
 
-            // Log thông tin
-            log('INFO', `[MD5] Fallback: neuralScore=${neuralScore.toFixed(3)}, prediction=${prediction ? 'T' : 'X'}`);
+            // Log
+            log('INFO', '[MD5] Fallback: ns=' + neuralScore.toFixed(3) + ' -> ' + (prediction ? 'T' : 'X'))
 
             // Trả về kết quả
             return {
                 prediction: prediction ? 'T' : 'X',
                 confidence: Math.round(confidence * 100),
-                method: 'neural_fallback',
-                rawScore: Math.round(neuralScore * 100) / 100,
-                reason: `Fallback neural: score=${neuralScore.toFixed(3)}`
-            };
+                method: 'neural_fallback'
+            }
 
         } catch (err) {
-            // Nếu có lỗi trong quá trình dự đoán
-            log('ERROR', `[MD5] Lỗi predict: ${err.message}`);
-            // Trả về dự đoán mặc định 50/50
-            const prediction = Math.random() < 0.5;
-            this.lastPrediction = prediction;
+            // Log lỗi
+            log('ERROR', '[MD5] Lỗi predict: ' + err.message)
+
+            // Dự đoán mặc định 50/50
+            const prediction = Math.random() < 0.5
+            this.lastPrediction = prediction
+
+            // Trả về kết quả lỗi
             return {
                 prediction: prediction ? 'T' : 'X',
                 confidence: 50,
-                method: 'error_fallback',
-                reason: `Lỗi: ${err.message}`
-            };
+                method: 'error_fallback'
+            }
         }
     }
 
+
     /**
      * Thêm kết quả thực tế vào lịch sử
-     * Đầu vào: resultInput - kết quả thực tế, sessionData - dữ liệu phiên
-     * Đầu ra: không
      */
     addResult(resultInput, sessionData) {
+        // Bọc trong try-catch
         try {
-            // Chuẩn hóa kết quả về 'T' hoặc 'X'
-            const result = normalizeResult(resultInput);
-            // Tạo timestamp nếu không có
-            const timestamp = (sessionData && sessionData.timestamp) ? sessionData.timestamp : Date.now();
+            // Chuẩn hóa kết quả
+            const result = normalizeResult(resultInput)
+
+            // Tạo timestamp
+            const timestamp = (sessionData && sessionData.timestamp) ? sessionData.timestamp : Date.now()
 
             // Thêm phiên vào lịch sử
             this.history.push({
@@ -1462,189 +1948,172 @@ class PredictionEngine {
                 result: result,
                 total: sessionData ? sessionData.total : null,
                 timestamp: timestamp
-            });
+            })
 
-            // Giới hạn lịch sử tối đa MAX_H phiên
+            // Giới hạn lịch sử
             if (this.history.length > MAX_H) {
-                this.history.shift();
+                this.history.shift()
             }
 
             // Cập nhật thời gian giữa các phiên
             if (this.history.length >= 2) {
-                const last = this.history[this.history.length - 1];
-                const prev = this.history[this.history.length - 2];
-                const delta = (last.timestamp - prev.timestamp) / 1000;
-                this.y.push(delta);
-                if (this.y.length > 20) this.y.shift();
+                const last = this.history[this.history.length - 1]
+                const prev = this.history[this.history.length - 2]
+                const delta = (last.timestamp - prev.timestamp) / 1000
+                this.y.push(delta)
+                if (this.y.length > 20) {
+                    this.y.shift()
+                }
             }
 
             // Cập nhật thống kê
-            this.stats.totalSessions++;
+            this.stats.totalSessions = this.stats.totalSessions + 1
+
+            // Cập nhật đếm Tài/Xỉu
             if (result === 'T') {
-                this.stats.totalTai++;
+                this.stats.totalTai = this.stats.totalTai + 1
             } else {
-                this.stats.totalXiu++;
+                this.stats.totalXiu = this.stats.totalXiu + 1
             }
 
             // Cập nhật streak
             if (this.stats.currentStreakType === result) {
-                this.stats.currentStreakCount++;
+                this.stats.currentStreakCount = this.stats.currentStreakCount + 1
             } else {
-                this.stats.currentStreakType = result;
-                this.stats.currentStreakCount = 1;
+                this.stats.currentStreakType = result
+                this.stats.currentStreakCount = 1
             }
+
             // Cập nhật streak dài nhất
             if (result === 'T' && this.stats.currentStreakCount > this.stats.longestTaiStreak) {
-                this.stats.longestTaiStreak = this.stats.currentStreakCount;
+                this.stats.longestTaiStreak = this.stats.currentStreakCount
             }
             if (result === 'X' && this.stats.currentStreakCount > this.stats.longestXiuStreak) {
-                this.stats.longestXiuStreak = this.stats.currentStreakCount;
+                this.stats.longestXiuStreak = this.stats.currentStreakCount
             }
 
-            // So sánh với dự đoán cuối cùng
+            // So sánh với dự đoán cuối
             if (this.lastPrediction !== null) {
-                const predicted = this.lastPrediction ? 'T' : 'X';
-                const isCorrect = predicted === result;
+                // Lấy dự đoán dạng T/X
+                const predicted = this.lastPrediction ? 'T' : 'X'
+
+                // Kiểm tra đúng/sai
+                const isCorrect = predicted === result
 
                 // Thêm vào prediction log
-                this.predictionLog.push({
-                    predicted: this.lastPrediction,
-                    actual: result === 'T',
-                    timestamp: timestamp,
-                    sessionId: sessionData ? sessionData.sessionId : 'unknown'
-                });
+                const logEntry = {
+                    phien: String(sessionData ? sessionData.sessionId : ''),
+                    xuc_xac: sessionData ? (sessionData.dice || '') : '',
+                    tong: sessionData ? (sessionData.total || 0) : 0,
+                    ket_qua: result === 'T' ? 'Tài' : 'Xỉu',
+                    du_doan: predicted === 'T' ? 'Tài' : 'Xỉu',
+                    danh_gia: isCorrect ? '✅ ĐÚNG' : '❌ SAI',
+                    do_tin_cay: '0%',
+                    timestamp: new Date().toISOString()
+                }
+
+                // Thêm vào mảng
+                this.predictionLog.push(logEntry)
 
                 // Giới hạn prediction log
                 if (this.predictionLog.length > MAX_H) {
-                    this.predictionLog.shift();
+                    this.predictionLog.shift()
                 }
 
                 // Cập nhật thống kê đúng/sai
                 if (isCorrect) {
-                    this.stats.correctPredictions++;
+                    this.stats.correctPredictions = this.stats.correctPredictions + 1
                 } else {
-                    this.stats.wrongPredictions++;
+                    this.stats.wrongPredictions = this.stats.wrongPredictions + 1
                 }
             }
 
         } catch (err) {
-            log('ERROR', `[MD5] Lỗi addResult: ${err.message}`);
+            // Log lỗi
+            log('ERROR', '[MD5] Lỗi addResult: ' + err.message)
         }
     }
 
-    /**
-     * Ghi log dự đoán với format đầy đủ
-     * Đầu vào: sid - sessionId, prediction - kết quả dự đoán 'T'|'X', dice - xúc xắc, total - tổng
-     * Đầu ra: không
-     */
-    logPrediction(sid, prediction, dice, total) {
-        try {
-            // Tạo entry log dự đoán
-            const entry = {
-                phien: String(sid),
-                xuc_xac: dice || '',
-                tong: total || 0,
-                ket_qua: '', // Sẽ cập nhật sau khi có kết quả
-                du_doan: prediction === 'T' ? 'Tài' : 'Xỉu',
-                danh_gia: '', // Sẽ cập nhật sau
-                do_tin_cay: '0%',
-                timestamp: new Date().toISOString()
-            };
-            // Thêm vào prediction log
-            this.predictionLog.push(entry);
-            // Giới hạn số lượng
-            if (this.predictionLog.length > 10000) {
-                this.predictionLog.shift();
-            }
-        } catch (err) {
-            log('ERROR', 'Lỗi logPrediction: ' + err.message);
-        }
-    }
 
     /**
      * Lấy danh sách dự đoán gần đây
-     * Đầu vào: limit - số lượng tối đa
-     * Đầu ra: mảng các dự đoán
      */
     getPredictionLog(limit) {
-        // Lấy tối đa limit dự đoán gần nhất
-        const count = limit || 50;
-        const log = this.predictionLog.slice(-count);
+        // Lấy số lượng cần lấy
+        const count = limit || 50
+
+        // Lấy các dự đoán gần nhất
+        const log = this.predictionLog.slice(-count)
+
         // Đảo ngược để hiển thị mới nhất trước
-        log.reverse();
-        return log;
+        log.reverse()
+
+        // Trả về kết quả
+        return log
     }
 
-    /**
-     * Lấy thống kê dự đoán
-     * Đầu vào: không
-     * Đầu ra: object thống kê
-     */
-    getPredictionStats() {
-        const total = this.predictionLog.length;
-        let correct = 0;
-        let wrong = 0;
-        // Đếm số dự đoán đúng/sai
-        for (const entry of this.predictionLog) {
-            if (entry.danh_gia && entry.danh_gia.includes('ĐÚNG')) {
-                correct++;
-            } else if (entry.danh_gia && entry.danh_gia.includes('SAI')) {
-                wrong++;
-            }
-        }
-        return {
-            totalPredictions: total,
-            correctPredictions: correct,
-            wrongPredictions: wrong,
-            accuracy: total > 0 ? (correct / total * 100).toFixed(1) + '%' : '0.0%'
-        };
-    }
 
     /**
      * Lấy độ chính xác
-     * Đầu vào: không
-     * Đầu ra: chuỗi phần trăm
      */
     getAccuracy() {
-        const total = this.stats.totalSessions;
-        if (total === 0) return '0.0%';
-        return (this.stats.correctPredictions / total * 100).toFixed(1) + '%';
+        // Tổng số phiên
+        const total = this.stats.totalSessions
+
+        // Nếu chưa có phiên nào
+        if (total === 0) {
+            return '0.0%'
+        }
+
+        // Tính phần trăm đúng
+        const percent = (this.stats.correctPredictions / total * 100)
+        return percent.toFixed(1) + '%'
     }
+
 
     /**
      * Lấy thời gian chạy
-     * Đầu vào: không
-     * Đầu ra: chuỗi format
      */
     getRuntime() {
-        return timeStr(Date.now() - this.stats.startTime);
+        // Tính thời gian đã chạy
+        const elapsed = Date.now() - this.stats.startTime
+
+        // Format và trả về
+        return timeStr(elapsed)
     }
-}
+
+} // Kết thúc class PredictionEngine
+
 
 // ============================================================
-// 4. WEBSOCKET CLIENT
+// WEBSOCKET CLIENT
 // ============================================================
+
+// Biến đếm số lần reconnect
+let reconnectAttempts = 0
 
 /**
  * Kết nối WebSocket và xử lý sự kiện
  */
 function connectWebSocket() {
-    log('INFO', 'Đang kết nối WebSocket: ' + WS_URL);
+    // Log bắt đầu kết nối
+    log('INFO', 'Đang kết nối WebSocket...')
 
-    // Tạo options cho WebSocket
-    const options = {
-        headers: {},
-        rejectUnauthorized: false
-    };
-
+    // Bọc trong try-catch
     try {
         // Tạo kết nối WebSocket
-        const ws = new WebSocket(WS_URL, options);
-        let pingInterval = null;
+        const ws = new WebSocket(WS_URL, { rejectUnauthorized: false })
+
+        // Biến lưu interval ping
+        let pingInterval = null
 
         // Xử lý khi kết nối thành công
         ws.on('open', function() {
-            log('INFO', 'WebSocket đã kết nối!');
+            // Log kết nối thành công
+            log('INFO', 'WebSocket CONNECTED!')
+
+            // Reset số lần reconnect
+            reconnectAttempts = 0
 
             // Đăng ký hub
             const registerMsg = JSON.stringify({
@@ -1652,160 +2121,204 @@ function connectWebSocket() {
                 M: 'Register',
                 A: [],
                 I: 0
-            });
-            ws.send(registerMsg + '\n');
-            log('INFO', 'Đã gửi đăng ký hub: ' + HUB_NAME);
+            })
+
+            // Gửi đăng ký
+            ws.send(registerMsg + '\n')
+
+            // Log đã gửi đăng ký
+            log('INFO', 'Đã gửi đăng ký hub: ' + HUB_NAME)
 
             // Gửi ping mỗi 60 giây để giữ kết nối
             pingInterval = setInterval(function() {
+                // Kiểm tra kết nối còn mở
                 if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ H: HUB_NAME, M: 'Ping', A: [], I: 0 }) + '\n');
+                    // Gửi ping
+                    ws.send(JSON.stringify({
+                        H: HUB_NAME,
+                        M: 'Ping',
+                        A: [],
+                        I: 0
+                    }) + '\n')
                 }
-            }, 60000);
-        });
+            }, 60000)
+        })
 
         // Xử lý khi nhận message
         ws.on('message', function(data) {
             try {
-                // Parse message (có thể có nhiều message ngăn cách bởi \n)
-                const messages = data.toString().split('\n');
+                // Parse message (có thể có nhiều message)
+                const messages = data.toString().split('\n')
+
+                // Duyệt qua từng message
                 for (const msg of messages) {
-                    if (msg.trim()) {
-                        const parsed = JSON.parse(msg);
-                        handleMessage(parsed);
+                    // Bỏ qua message rỗng
+                    if (!msg.trim()) {
+                        continue
+                    }
+
+                    // Parse JSON
+                    const parsed = JSON.parse(msg)
+
+                    // Kiểm tra loại message
+                    if (parsed.M === 'Md5sessionInfo' && parsed.A && parsed.A.length > 0) {
+                        // Lấy dữ liệu phiên
+                        const sd = parsed.A[0]
+
+                        // Kiểm tra phiên đã có kết quả
+                        if (sd.CurrentState === 1 && sd.Dice1 > 0) {
+                            // Lấy giá trị xúc xắc
+                            const dice1 = sd.Dice1 || 0
+                            const dice2 = sd.Dice2 || 0
+                            const dice3 = sd.Dice3 || 0
+
+                            // Tính tổng
+                            const total = dice1 + dice2 + dice3
+
+                            // Xác định Tài/Xỉu
+                            const result = total >= 11 ? 'Tài' : 'Xỉu'
+
+                            // Lấy session ID
+                            const sessionId = sd.SessionId || 0
+
+                            // Log phiên
+                            log('INFO', '[WS] Phiên #' + sessionId + ': ' + dice1 + '-' + dice2 + '-' + dice3 + ' = ' + total + ' → ' + result)
+
+                            // Thêm kết quả vào engine
+                            engine.addResult(result, {
+                                sessionId: sessionId,
+                                total: total,
+                                dice: dice1 + '-' + dice2 + '-' + dice3,
+                                timestamp: Date.now()
+                            })
+
+                            // Dự đoán cho phiên tiếp theo
+                            const prediction = engine.predict({
+                                sessionId: sessionId + 1,
+                                timestamp: Date.now()
+                            })
+
+                            // In box kết quả ra console
+                            console.log('')
+                            console.log('┌──────────────────────────────────────────┐')
+                            console.log('│ #' + String(sessionId).padEnd(35) + '│')
+                            console.log('│ 🎲 [' + dice1 + ',' + dice2 + ',' + dice3 + '] = ' + total + ' → ' + result + ' '.repeat(Math.max(0, 20 - result.length)) + '│')
+                            console.log('│ 🔮 DỰ ĐOÁN: ' + (prediction.prediction === 'T' ? 'TÀI' : 'XỈU') + ' (' + prediction.confidence + '%)' + ' '.repeat(Math.max(0, 15)) + '│')
+                            console.log('│ 📊 ' + engine.stats.totalSessions + ' phiên | 🎯 ' + engine.getAccuracy() + ' | ⚡ ' + engine.getRuntime() + ' '.repeat(Math.max(0, 5)) + '│')
+                            console.log('└──────────────────────────────────────────┘')
+                            console.log('')
+                        }
                     }
                 }
             } catch (err) {
-                // Bỏ qua message không parse được
+                // Bỏ qua message lỗi
             }
-        });
+        })
 
         // Xử lý khi kết nối đóng
         ws.on('close', function() {
-            log('WARN', 'WebSocket đã đóng, sẽ thử kết nối lại sau 5 giây');
-            if (pingInterval) clearInterval(pingInterval);
-            setTimeout(connectWebSocket, 5000);
-        });
+            // Xóa ping interval
+            if (pingInterval) {
+                clearInterval(pingInterval)
+            }
+
+            // Tính thời gian reconnect
+            const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 30000)
+
+            // Tăng số lần reconnect
+            reconnectAttempts = reconnectAttempts + 1
+
+            // Log
+            log('WARN', 'WebSocket đóng, reconnect sau ' + Math.round(delay / 1000) + 's')
+
+            // Reconnect sau delay
+            setTimeout(connectWebSocket, delay)
+        })
 
         // Xử lý lỗi
         ws.on('error', function(err) {
-            log('ERROR', 'WebSocket lỗi: ' + err.message);
-        });
-
-        // Lưu tham chiếu ws
-        global.ws = ws;
+            // Log lỗi
+            log('ERROR', 'WebSocket lỗi: ' + err.message)
+        })
 
     } catch (err) {
-        log('ERROR', 'Lỗi kết nối WebSocket: ' + err.message);
-        setTimeout(connectWebSocket, 5000);
+        // Log lỗi kết nối
+        log('ERROR', 'Lỗi kết nối WebSocket: ' + err.message)
+
+        // Thử lại sau 5 giây
+        setTimeout(connectWebSocket, 5000)
     }
 }
 
-/**
- * Xử lý message từ WebSocket
- * Đầu vào: msg - message đã parse
- */
-function handleMessage(msg) {
-    try {
-        // Kiểm tra loại message
-        if (msg.M === 'Md5sessionInfo' && msg.A && msg.A.length > 0) {
-            const sessionData = msg.A[0];
-
-            // Kiểm tra trạng thái phiên
-            if (sessionData.CurrentState === 1 && sessionData.Dice1 > 0) {
-                // Phiên đã có kết quả
-                const dice1 = sessionData.Dice1 || 0;
-                const dice2 = sessionData.Dice2 || 0;
-                const dice3 = sessionData.Dice3 || 0;
-                const total = dice1 + dice2 + dice3;
-                const result = total >= 11 ? 'Tài' : 'Xỉu';
-                const sessionId = sessionData.SessionId || 0;
-
-                log('INFO', `[WS] Phiên #${sessionId}: ${dice1}-${dice2}-${dice3} = ${total} → ${result}`);
-
-                // Thêm kết quả vào engine
-                engine.addResult(result, {
-                    sessionId: sessionId,
-                    total: total,
-                    dice: `${dice1}-${dice2}-${dice3}`,
-                    timestamp: Date.now()
-                });
-
-                // Dự đoán cho phiên tiếp theo
-                const prediction = engine.predict({ sessionId: sessionId + 1, timestamp: Date.now() });
-
-                // Log dự đoán
-                engine.logPrediction(sessionId + 1, prediction.prediction, '', 0);
-
-                console.log('');
-                console.log('╔══════════════════════════════════════╗');
-                console.log(`║  🎲 PHIÊN #${String(sessionId).padEnd(25)}║`);
-                console.log(`║  🎯 DỰ ĐOÁN: ${prediction.prediction === 'T' ? 'TÀI' : 'XỈU'} (${prediction.confidence}%)`.padEnd(45) + '║');
-                console.log('╚══════════════════════════════════════╝');
-                console.log('');
-            }
-        }
-    } catch (err) {
-        log('ERROR', 'Lỗi xử lý message: ' + err.message);
-    }
-}
 
 // ============================================================
-// 5. HTTP API SERVER
+// API SERVER
 // ============================================================
 
 /**
  * Tạo HTTP server cho API
  */
-const apiServer = http.createServer(function(req, res) {
+const server = http.createServer(function(req, res) {
     // Set CORS headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 
     // Xử lý OPTIONS request
     if (req.method === 'OPTIONS') {
-        res.writeHead(200);
-        res.end();
-        return;
+        res.writeHead(200)
+        res.end()
+        return
     }
 
-    const url = new URL(req.url, 'http://localhost:' + API_PORT);
-    const pathname = url.pathname;
+    // Parse URL
+    const url = new URL(req.url, 'http://localhost:' + API_PORT)
+    const pathname = url.pathname
 
+    // Bọc trong try-catch
     try {
         // === GET /health ===
         if (req.method === 'GET' && pathname === '/health') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
+            // Tạo response
+            const response = {
                 status: 'running',
                 version: '1.0.0',
                 engine: 'MD5',
                 runtime: engine.getRuntime(),
                 sessions: engine.stats.totalSessions,
                 accuracy: engine.getAccuracy()
-            }));
-            return;
+            }
+
+            // Trả về JSON
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(response))
+            return
         }
 
         // === GET /api/predict ===
         if (req.method === 'GET' && pathname === '/api/predict') {
-            const prediction = engine.predict({ timestamp: Date.now() });
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
+            // Gọi predict
+            const prediction = engine.predict({})
+
+            // Tạo response
+            const response = {
                 success: true,
                 prediction: prediction.prediction === 'T' ? 'Tài' : 'Xỉu',
                 confidence: prediction.confidence,
                 method: prediction.method,
-                reason: prediction.reason
-            }));
-            return;
+                reason: prediction.reason || ''
+            }
+
+            // Trả về JSON
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(response))
+            return
         }
 
         // === GET /api/stats ===
         if (req.method === 'GET' && pathname === '/api/stats') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
+            // Tạo response
+            const response = {
                 totalSessions: engine.stats.totalSessions,
                 totalTai: engine.stats.totalTai,
                 totalXiu: engine.stats.totalXiu,
@@ -1815,117 +2328,144 @@ const apiServer = http.createServer(function(req, res) {
                 runtime: engine.getRuntime(),
                 longestTaiStreak: engine.stats.longestTaiStreak,
                 longestXiuStreak: engine.stats.longestXiuStreak,
-                currentStreak: engine.stats.currentStreakType + ' x' + engine.stats.currentStreakCount
-            }));
-            return;
+                currentStreak: (engine.stats.currentStreakType || 'N/A') + ' x' + engine.stats.currentStreakCount
+            }
+
+            // Trả về JSON
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(response))
+            return
         }
 
         // === GET /api/prediction_log ===
         if (req.method === 'GET' && pathname === '/api/prediction_log') {
-            const limit = parseInt(url.searchParams.get('limit') || '50');
-            const log = engine.getPredictionLog(limit);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(log));
-            return;
+            // Lấy limit từ query string
+            const limit = parseInt(url.searchParams.get('limit') || '50')
+
+            // Lấy log dự đoán
+            const log = engine.getPredictionLog(limit)
+
+            // Trả về JSON
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(log))
+            return
         }
 
         // === GET / ===
         if (req.method === 'GET' && (pathname === '/' || pathname === '')) {
-            const stats = engine.stats;
-            const html = `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>XocDia88 - Engine MD5</title>
-    <meta http-equiv="refresh" content="5">
-    <style>
-        body { font-family: monospace; background: #0a0a0a; color: #0f0; padding: 20px; }
-        .box { border: 1px solid #0f0; padding: 15px; margin: 10px 0; }
-        h1 { color: #0ff; }
-        .correct { color: #0f0; }
-        .wrong { color: #f00; }
-    </style>
-</head>
-<body>
-    <h1>🎲 XocDia88 - Engine MD5</h1>
-    <div class="box">
-        <p>📊 Tổng phiên: <b>${stats.totalSessions}</b></p>
-        <p>📈 Độ chính xác: <b>${engine.getAccuracy()}</b></p>
-        <p>✅ Dự đoán đúng: <span class="correct">${stats.correctPredictions}</span></p>
-        <p>❌ Dự đoán sai: <span class="wrong">${stats.wrongPredictions}</span></p>
-        <p>⏱️ Thời gian chạy: ${engine.getRuntime()}</p>
-        <p>🔥 Streak hiện tại: ${stats.currentStreakType || 'N/A'} x${stats.currentStreakCount}</p>
-    </div>
-    <div class="box">
-        <h2>API Endpoints</h2>
-        <p>GET /health - Trạng thái server</p>
-        <p>GET /api/predict - Dự đoán phiên tiếp theo</p>
-        <p>GET /api/stats - Thống kê chi tiết</p>
-        <p>GET /api/prediction_log?limit=50 - Log dự đoán</p>
-    </div>
-    <p>🕐 Server time: ${new Date().toISOString()}</p>
-</body>
-</html>`;
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(html);
-            return;
+            // Lấy stats
+            const s = engine.stats
+
+            // Tạo HTML
+            const html = '<!DOCTYPE html>\n' +
+                '<html>\n' +
+                '<head>\n' +
+                '<meta charset="utf-8">\n' +
+                '<title>XocDia88 - MD5</title>\n' +
+                '<meta http-equiv="refresh" content="5">\n' +
+                '<style>\n' +
+                'body { font-family: monospace; background: #0a0a0a; color: #0f0; padding: 20px; }\n' +
+                '.box { border: 1px solid #0f0; padding: 15px; margin: 10px 0; }\n' +
+                'h1 { color: #0ff; }\n' +
+                '.correct { color: #0f0; }\n' +
+                '.wrong { color: #f00; }\n' +
+                '</style>\n' +
+                '</head>\n' +
+                '<body>\n' +
+                '<h1>🎲 XocDia88 - Engine MD5</h1>\n' +
+                '<div class="box">\n' +
+                '<p>📊 Tổng phiên: <b>' + s.totalSessions + '</b></p>\n' +
+                '<p>📈 Độ chính xác: <b>' + engine.getAccuracy() + '</b></p>\n' +
+                '<p>✅ Dự đoán đúng: <span class="correct">' + s.correctPredictions + '</span></p>\n' +
+                '<p>❌ Dự đoán sai: <span class="wrong">' + s.wrongPredictions + '</span></p>\n' +
+                '<p>⏱️ Thời gian chạy: ' + engine.getRuntime() + '</p>\n' +
+                '<p>🔥 Streak hiện tại: ' + (s.currentStreakType || 'N/A') + ' x' + s.currentStreakCount + '</p>\n' +
+                '</div>\n' +
+                '<div class="box">\n' +
+                '<h2>API Endpoints</h2>\n' +
+                '<p>GET /health - Trạng thái server</p>\n' +
+                '<p>GET /api/predict - Dự đoán phiên tiếp theo</p>\n' +
+                '<p>GET /api/stats - Thống kê chi tiết</p>\n' +
+                '<p>GET /api/prediction_log?limit=50 - Log dự đoán</p>\n' +
+                '</div>\n' +
+                '<p>🕐 Server time: ' + new Date().toISOString() + '</p>\n' +
+                '</body>\n' +
+                '</html>'
+
+            // Trả về HTML
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+            res.end(html)
+            return
         }
 
         // === 404 ===
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not found', path: pathname }));
+        res.writeHead(404, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Not found', path: pathname }))
 
     } catch (err) {
-        log('ERROR', 'API Error: ' + err.message);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        // Log lỗi
+        log('ERROR', 'API Error: ' + err.message)
+
+        // Trả về lỗi 500
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: err.message }))
     }
-});
+})
+
 
 // ============================================================
-// 6. KHỞI TẠO VÀ CHẠY
+// KHỞI TẠO VÀ CHẠY
 // ============================================================
 
 // Tạo engine
-const engine = new PredictionEngine();
+const engine = new PredictionEngine()
 
 // Tạo thư mục data
-ensureDir();
+ensureDir()
 
 // Kết nối WebSocket
-connectWebSocket();
+connectWebSocket()
 
 // Tự động lưu dữ liệu mỗi 5 phút
 setInterval(function() {
-    engine.saveHistory();
-    engine.savePredictionLog();
-    engine.savePatternWeights();
-    log('INFO', 'Đã tự động lưu dữ liệu');
-}, SAVE_MS);
+    // Lưu history
+    engine.saveHistory()
+
+    // Lưu prediction log
+    engine.savePredictionLog()
+
+    // Log
+    log('INFO', 'Đã tự động lưu dữ liệu')
+}, SAVE_MS)
 
 // Khởi động API server
-apiServer.listen(API_PORT, function() {
-    console.log('');
-    console.log('╔══════════════════════════════════════╗');
-    console.log('║        🎲 XocDia88 - Engine MD5     ║');
-    console.log('║        Server đã khởi động!          ║');
-    console.log('╠══════════════════════════════════════╣');
-    console.log(`║  API: http://localhost:${API_PORT}`.padEnd(45) + '║');
-    console.log(`║  Health: http://localhost:${API_PORT}/health`.padEnd(45) + '║');
-    console.log('╚══════════════════════════════════════╝');
-    console.log('');
-});
+server.listen(API_PORT, function() {
+    // In banner khởi động
+    console.log('')
+    console.log('╔══════════════════════════════════════╗')
+    console.log('║        🎲 XocDia88 - Engine MD5     ║')
+    console.log('║        Server đã khởi động!          ║')
+    console.log('╠══════════════════════════════════════╣')
+    console.log('║  API: http://localhost:' + String(API_PORT).padEnd(28) + '║')
+    console.log('║  Health: http://localhost:' + String(API_PORT).padEnd(21) + '/health ║')
+    console.log('╚══════════════════════════════════════╝')
+    console.log('')
+})
 
 // Xử lý tắt server
 process.on('SIGINT', function() {
-    console.log('');
-    log('INFO', 'Đang tắt server...');
-    engine.saveHistory();
-    engine.savePredictionLog();
-    engine.savePatternWeights();
-    log('INFO', 'Đã lưu dữ liệu. Tạm biệt!');
-    process.exit(0);
-});
+    // Log
+    console.log('')
+    log('INFO', 'Đang tắt server...')
 
+    // Lưu dữ liệu
+    engine.saveHistory()
+    engine.savePredictionLog()
+
+    // Log tạm biệt
+    log('INFO', 'Đã lưu dữ liệu. Tạm biệt!')
+
+    // Thoát
+    process.exit(0)
+})
 

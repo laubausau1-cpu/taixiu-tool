@@ -1,0 +1,15 @@
+[2026-06-25T02:08:57.588Z] [INFO] Đã tạo thư mục data: /data/data/com.termux/files/home/taixiu-final/data
+[2026-06-25T02:08:57.641Z] [INFO] Đang kết nối WebSocket: wss://default.example.com
+[2026-06-25T02:08:57.948Z] [ERROR] WebSocket lỗi: getaddrinfo ENOTFOUND default.example.com
+[2026-06-25T02:08:57.951Z] [WARN] WebSocket đã đóng, sẽ thử kết nối lại sau 5 giây
+[2026-06-25T02:09:02.962Z] [INFO] Đang kết nối WebSocket: wss://default.example.com
+[2026-06-25T02:09:02.982Z] [ERROR] WebSocket lỗi: getaddrinfo ENOTFOUND default.example.com
+[2026-06-25T02:09:02.983Z] [WARN] WebSocket đã đóng, sẽ thử kết nối lại sau 5 giây
+[2026-06-25T02:09:07.987Z] [INFO] Đang kết nối WebSocket: wss://default.example.com
+[2026-06-25T02:09:08.004Z] [ERROR] WebSocket lỗi: getaddrinfo ENOTFOUND default.example.com
+[2026-06-25T02:09:08.005Z] [WARN] WebSocket đã đóng, sẽ thử kết nối lại sau 5 giây
+[2026-06-25T02:09:13.008Z] [INFO] Đang kết nối WebSocket: wss://default.example.com
+[2026-06-25T02:09:13.022Z] [ERROR] WebSocket lỗi: getaddrinfo ENOTFOUND default.example.com
+[2026-06-25T02:09:13.024Z] [WARN] WebSocket đã đóng, sẽ thử kết nối lại sau 5 giây
+[2026-06-25T02:09:14.351Z] [INFO] Đang tắt server...
+[2026-06-25T02:09:14.357Z] [INFO] Đã lưu dữ liệu. Tạm biệt!
