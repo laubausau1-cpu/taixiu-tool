@@ -1,125 +1,539 @@
-const WebSocket=require('ws'),fs=require('fs'),path=require('path'),http=require('http');
-const WS_URL=process.env.WS_URL||'wss://taixiumd5.system32-cloudfare-356783752985678522.monster/signalr/connect?transport=webSockets&connectionToken=z0%2Bp4sHHXusB7hFR4ZBSkc7TBejGa%2BoooswT8oNe8KhHmsJEIWLTtZh40jp%2FuaCUuwj1vJOAqw%2Fc1EBSv7ebeZGlhgS2FeQ1GNBYU%2F5AVausPA4HmHluu0RJW1Pwcy9H&connectionData=%5B%7B%22name%22%3A%22md5luckydiceHub%22%7D%5D&tid=1';
-const HUB_NAME='md5luckydiceHub',DATA_DIR=path.join(__dirname,'data'),HISTORY_FILE=path.join(DATA_DIR,'history.json'),PRED_FILE=path.join(DATA_DIR,'prediction_log.json'),API_PORT=parseInt(process.env.PORT||'8888'),SAVE_MS=300000,MAX_H=100000,MIN_S=6;
+// xocdia88.js — Ensemble AI Prediction Engine (47 patterns + NN + Adaptive Learning)
+// Chạy: node xocdia88.js [ws_url]
 
-function ensureDir(){try{if(!fs.existsSync(DATA_DIR))fs.mkdirSync(DATA_DIR,{recursive:true})}catch(e){}}
-function log(l,m){const t=new Date().toISOString();console.log('['+t+'] ['+l+'] '+m)}
-function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
-function sigmoid(x){return 1/(1+Math.exp(-x))}
-function relu(x){return Math.max(0,x)}
-function softmax(arr){const exp=arr.map(x=>Math.exp(x-Math.max(...arr))),sum=exp.reduce((a,b)=>a+b,0);return exp.map(x=>x/sum)}
-function normalizeResult(raw){if(!raw)return'T';const m={t:'T',tai:'T','tài':'T',x:'X',xiu:'X','xỉu':'X',c:'T',chan:'T','chẵn':'T',l:'X',le:'X','lẻ':'X'};return m[raw.trim().toLowerCase()]||'T'}
-function getLastN(arr,n){if(n<=0)return[];const r=[];for(let i=arr.length-1;i>=0&&r.length<n;i--)r.push(arr[i]);r.reverse();return r}
+const WebSocket = require('ws');
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
 
-class NeuralNetwork{
-    constructor(){this.inputSize=10;this.hiddenSize=8;this.outputSize=2;this.lr=0.001;this.momentum=0.9;this.w1=this._xavier(10,8);this.b1=new Array(8).fill(0);this.w2=this._xavier(8,2);this.b2=new Array(2).fill(0);this.vw1=this._zeros(10,8);this.vb1=new Array(8).fill(0);this.vw2=this._zeros(8,2);this.vb2=new Array(2).fill(0)}
-    _xavier(r,c){const s=Math.sqrt(2/(r+c));return Array.from({length:r},()=>Array.from({length:c},()=>(Math.random()*2-1)*s))}
-    _zeros(r,c){return Array.from({length:r},()=>new Array(c).fill(0))}
-    forward(input){this.hidden=this.b1.map((b,i)=>relu(input.reduce((s,x,j)=>s+x*this.w1[j][i],0)+b));this.output=this.b2.map((b,i)=>this.hidden.reduce((s,h,j)=>s+h*this.w2[j][i],0)+b);this.probs=softmax(this.output);return this.probs}
-    train(input,target){const probs=this.forward(input),dout=[probs[0]-target[0],probs[1]-target[1]];for(let i=0;i<8;i++)for(let j=0;j<2;j++){const g=dout[j]*this.hidden[i];this.vw2[i][j]=this.momentum*this.vw2[i][j]-this.lr*g;this.w2[i][j]+=this.vw2[i][j]}for(let j=0;j<2;j++){this.vb2[j]=this.momentum*this.vb2[j]-this.lr*dout[j];this.b2[j]+=this.vb2[j]}const dh=new Array(8).fill(0);for(let i=0;i<8;i++){for(let j=0;j<2;j++)dh[i]+=dout[j]*this.w2[i][j];dh[i]*=this.hidden[i]>0?1:0}for(let i=0;i<10;i++)for(let j=0;j<8;j++){const g=dh[j]*input[i];this.vw1[i][j]=this.momentum*this.vw1[i][j]-this.lr*g;this.w1[i][j]+=this.vw1[i][j]}for(let j=0;j<8;j++){this.vb1[j]=this.momentum*this.vb1[j]-this.lr*dh[j];this.b1[j]+=this.vb1[j]}}
+// ==================== CONFIG ====================
+const WS_URL = process.env.WS_URL || process.argv[2] || 'wss://taixiumd5.system32-cloudfare-356783752985678522.monster/signalr/connect?transport=webSockets&connectionToken=z0%2Bp4sHHXusB7hFR4ZBSkc7TBejGa%2BoooswT8oNe8KhHmsJEIWLTtZh40jp%2FuaCUuwj1vJOAqw%2Fc1EBSv7ebeZGlhgS2FeQ1GNBYU%2F5AVausPA4HmHluu0RJW1Pwcy9H&connectionData=%5B%7B%22name%22%3A%22md5luckydiceHub%22%7D%5D&tid=1';
+const HUB_NAME = 'md5luckydiceHub';
+const DATA_DIR = path.join(__dirname, 'data');
+const API_PORT = parseInt(process.env.PORT || '8888');
+const SAVE_MS = 300000;
+const MAX_HISTORY = 2000;
+const MIN_SESSIONS = 6;
+
+// ==================== UTILS ====================
+function ensureDir() { if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true }); }
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
+function relu(x) { return Math.max(0, x); }
+function softmax(arr) { const max = Math.max(...arr); const exp = arr.map(v => Math.exp(v - max)); const sum = exp.reduce((a, b) => a + b, 0); return exp.map(v => v / sum); }
+
+function log(level, msg) {
+    const line = `[${new Date().toISOString()}] [${level}] ${msg}`;
+    console.log(line);
+    try { fs.appendFileSync(path.join(DATA_DIR, 'log.txt'), line + '\n'); } catch (_) {}
 }
 
-class PredictionEngine{
-    constructor(){this.nn=new NeuralNetwork();this.history=[];this.predictionLog=[];this.lastPrediction=null;this.y=[];this.patternSuccessCount={};this.patternFailCount={};this.patternStreak={};this.stats={totalSessions:0,totalTai:0,totalXiu:0,correctPredictions:0,wrongPredictions:0,longestTaiStreak:0,longestXiuStreak:0,currentStreakType:null,currentStreakCount:0,startTime:Date.now()};this.loadHistory();this.loadPredictionLog()}
-    loadHistory(){try{if(fs.existsSync(HISTORY_FILE)){const d=JSON.parse(fs.readFileSync(HISTORY_FILE,'utf8'));if(d.history)for(const i of d.history){this.history.push(i);this.stats.totalSessions++;i.result==='T'?this.stats.totalTai++:this.stats.totalXiu++}if(d.stats)this.stats={...this.stats,...d.stats,startTime:this.stats.startTime}}}catch(e){}}
-    loadPredictionLog(){try{if(fs.existsSync(PRED_FILE)){const d=JSON.parse(fs.readFileSync(PRED_FILE,'utf8'));if(Array.isArray(d))this.predictionLog=d}}catch(e){}}
-    saveHistory(){try{fs.writeFileSync(HISTORY_FILE,JSON.stringify({history:this.history.slice(-10000),stats:this.stats},null,2))}catch(e){}}
-    savePredictionLog(){try{fs.writeFileSync(PRED_FILE,JSON.stringify(this.predictionLog.slice(-10000),null,2))}catch(e){}}
-    getStreak(arr){if(!arr.length)return 0;const l=arr[arr.length-1];let c=0;for(let i=arr.length-1;i>=0&&arr[i]===l;i--)c++;return c}
-    extractFeatures(){const r=this.history.map(s=>s.result),n=r.length;if(n<5)return[0.5,0.5,0.5,0,0,0,0.5,0.5,0,0];const gr=(a,l)=>{const s=a.slice(-l);return s.filter(x=>x==='T').length/Math.max(s.length,1)};const r5=gr(r,5),r10=gr(r,10),r20=gr(r,20),sl=this.getStreak(r)/Math.max(n,1),lr=r[n-1]==='T'?1:0;let ts=0;if(this.y.length>0)ts=Math.min(this.y[this.y.length-1]/60,1);const p=r10,ent=p>0&&p<1?-p*Math.log2(p)-(1-p)*Math.log2(1-p):0;let ch=0;const l20=r.slice(-20);for(let i=0;i<l20.length-1;i++)if(l20[i]!==l20[i+1])ch++;const cr=l20.length>1?ch/(l20.length-1):0.5,im=Math.abs(r10-0.5)*2,f10=l20.slice(0,10).filter(x=>x==='T').length,l10=l20.slice(-10).filter(x=>x==='T').length,tr=l10-f10;return[r5,r10,r20,sl,lr,ts,ent,cr,im,tr]}
-    analyzeAllPatterns(){if(this.history.length<8)return[];const r=this.history.map(s=>s.result),last=r[r.length-1],l10=r.slice(-10),t10=l10.filter(x=>x==='T').length,m=[];const add=(n,p)=>{const sc=this.patternSuccessCount[n]||0,fc=this.patternFailCount[n]||0,ta=sc+fc,sr=ta>0?sc/ta:0.5,boost=(this.patternStreak[n]||0)>3?1.2:1,penalty=(this.patternStreak[n]||0)<-3?0.8:1,score=clamp(sr*boost*penalty,0.25,0.98);m.push({name:n,score,prediction:p,successRate:sr})};
-        {const a=r.slice(-2);if(a.length===2&&a[0]===a[1])add('Bệt ngắn',a[1]==='T')}
-        {const a=r.slice(-6);if(a.length===6&&a.every(x=>x===a[0]))add('Bệt dài',a[0]==='T')}
-        {const a=r.slice(-3);if(a.length===3&&a[0]===a[2]&&a[0]!==a[1])add('Đảo 1-1 ngắn',a[1]!=='T')}
-        {const a=r.slice(-5);if(a.length===5){let ok=true;for(let i=0;i<4;i++)if(a[i]===a[i+1])ok=false;if(ok)add('Đảo 1-1 dài',a[4]!=='T')}}
-        {const a=r.slice(-3);if(a.length===3){const tc=a.filter(x=>x==='T').length;if(this.history.length%3!==1&&tc>=2)add('Cầu 1-2',true)}}
-        {const a=r.slice(-3);if(a.length===3){const tc=a.filter(x=>x==='T').length;if(this.history.length%3===1&&tc>=2)add('Cầu 2-1',true)}}
-        {const a=r.slice(-4);if(a.length===4&&a[0]===a[1]&&a[2]===a[3]&&a[0]!==a[2])add('Kép 2-2',a[2]!=='T')}
-        {const a=r.slice(-4);if(a.length===4){const tc=a.filter(x=>x==='T').length;if(tc>=3)add('Cầu 3-1',false);if(tc<=1)add('Cầu 3-1',true)}}
-        {const a=r.slice(-5);if(a.length===5&&a[0]===a[2]&&a[2]===a[4]&&a[1]===a[3]&&a[0]!==a[1])add('Cầu 2-1-2',a[4]!=='T')}
-        {if(this.y.length>=5){const avg=this.y.slice(-5).reduce((a,b)=>a+b,0)/5;if(avg<5)add('Nhanh',last!=='T');if(avg>30)add('Chậm',last==='T')}}
-        {const a=r.slice(-10);if(a.length===10&&a.every(x=>x===a[0]))add('Bệt siêu dài',a[0]==='T')}
-        {const s=this.getStreak(r);if(s>=3&&s<=5)add('Bệt xen kẽ',last==='T');if(s>=4&&s<=7)add('Bệt gãy nhẹ',last!=='T');if(s>=6)add('Bệt ngược',last!=='T')}
-        {const a=r.slice(-2);if(a.length===2&&a[0]!==a[1])add('Đảo 1-1',a[1]!=='T')}
-        {const a=r.slice(-4);if(a.length===4&&a[0]===a[1]&&a[2]===a[3])add('Kép 2-2 MR',a[3]!=='T')}
-        {const a=r.slice(-6);if(a.length===6){const f=a.slice(0,3).every(x=>x===a[0]),l=a.slice(3).every(x=>x===a[3]);if(f&&l&&a[0]!==a[3])add('3-3',a[3]!=='T')}}
-        {const a=r.slice(-4);if(a.length===4&&a[0]===a[2]&&a[1]===a[3]&&a[0]!==a[1])add('Chu kỳ 2',a[3]!=='T')}
-        {const a=r.slice(-6);if(a.length===6&&a[0]===a[3]&&a[1]===a[4]&&a[2]===a[5])add('Chu kỳ 3',a[5]!=='T')}
-        {const a=r.slice(-3);const tc=a.filter(x=>x==='T').length;if(tc===2)add('Lặp 2-1',true);if(tc===1)add('Lặp 2-1',false)}
-        {const a=r.slice(-5);const tc=a.filter(x=>x==='T').length;if(tc>=3)add('Lặp 3-2',false);if(tc<=2)add('Lặp 3-2',true)}
-        {const a=r.slice(-5);if(a.length===5&&a[0]===a[4]&&a[1]===a[3])add('Đối xứng',a[2]!=='T')}
-        {const a=r.slice(-5);if(a.length===5){let m=0;for(let i=0;i<5;i++)if(a[i]===a[4-i])m++;if(m>=4)add('Bán đx',a[2]!=='T')}}
-        {const a=r.slice(-2);if(a.length===2&&a[0]==='X'&&a[1]==='X')add('Xỉu kép',false);if(a.length===2&&a[0]==='T'&&a[1]==='T')add('Tài kép',true)}
-        {const a=r.slice(-7);if(a.length===7){let ok=true;for(let i=0;i<6;i++)if(a[i]===a[i+1])ok=false;if(ok)add('Xen kẽ',a[6]!=='T')}}
-        {if(t10>=6)add('Gập ghềnh',true);if(t10<=4)add('Gập ghềnh',false)}
-        {add('Bậc thang',last!=='T');add('Gãy ngang',last!=='T');add('Cầu đôi',last!=='T')}
-        {add('Ngẫu nhiên',Math.random()<0.5)}
-        {if(t10>=5)add('Đa dạng',true);else add('Đa dạng',false)}
-        {add('Chu kỳ tăng',last!=='T');add('Chu kỳ giảm',last!=='T')}
-        {const a=r.slice(-6);if(a.length>0)add('Cầu lặp',a[0]==='T')}
-        {add('Đối ngược',last!=='T')}
-        {if(t10>5)add('Phân cụm',true);if(t10<5)add('Phân cụm',false)}
-        {if(t10>=5)add('Lệch NN',true);else add('Lệch NN',false)}
-        {add('Xen kẽ dài',last!=='T');add('Cầu gập',last!=='T');add('Xỉu lắc',last!=='T');add('Tài lắc',last!=='T')}
-        {if(t10>5)add('Phối hợp 1',true);else add('Phối hợp 1',false)}
-        {add('Phối hợp 2',t10>=5);add('Phối hợp 3',t10>=5)}
-        {add('NN bệt',last==='T')}
-        m.sort((a,b)=>b.score-a.score);return m
-    }
-    predict(sd){
-        try{
-            if(this.history.length<this.MIN_S){const f=this.extractFeatures(),p=this.nn.forward(f),pred=p[0]>p[1];this.lastPrediction=pred;return{prediction:pred?'T':'X',confidence:Math.round(Math.max(...p)*100),method:'warmup'}}
-            const pat=this.analyzeAllPatterns(),f=this.extractFeatures(),nnP=this.nn.forward(f),nnPred=nnP[0]>nnP[1],nnConf=Math.max(...nnP);
-            let tV=0,xV=0,tW=0;for(const p of pat){const w=p.score;tW+=w;if(p.prediction)tV+=w;else xV+=w}
-            const ePred=tV>xV,eConf=Math.abs(tV-xV)/Math.max(tW,1);
-            if(pat.length>0&&pat[0].score>0.72){const inv=!pat[0].prediction;this.lastPrediction=inv;return{prediction:inv?'T':'X',confidence:Math.round(clamp(pat[0].score,0.4,0.6)*100),method:'strong_inv',pattern:pat[0].name}}
-            if(pat.length>0&&pat[0].score>0.55){const b=pat[0],combined=(b.prediction?b.score:1-b.score)*0.6+b.successRate*0.4,pred=combined>=0.5;this.lastPrediction=pred;return{prediction:pred?'T':'X',confidence:Math.round(clamp(combined,0.4,0.6)*100),method:'medium',pattern:b.name}}
-            const fs=nnConf*0.3+eConf*0.7,fp=fs>0.5?nnPred:ePred;this.lastPrediction=fp;return{prediction:fp?'T':'X',confidence:Math.round(clamp(fs,0.4,0.6)*100),method:'hybrid'}
-        }catch(e){log('ERROR','predict: '+e.message);this.lastPrediction=Math.random()<0.5;return{prediction:this.lastPrediction?'T':'X',confidence:50,method:'error'}}
-    }
-    addResult(ri,sd){
-        try{
-            const r=normalizeResult(ri),ts=(sd&&sd.timestamp)||Date.now();this.history.push({sessionId:sd?sd.sessionId:'unknown',result:r,total:sd?sd.total:null,timestamp:ts});if(this.history.length>MAX_H)this.history.shift();
-            if(this.history.length>=2){this.y.push((this.history.at(-1).timestamp-this.history.at(-2).timestamp)/1000);if(this.y.length>20)this.y.shift()}
-            this.stats.totalSessions++;r==='T'?this.stats.totalTai++:this.stats.totalXiu++;
-            if(this.stats.currentStreakType===r)this.stats.currentStreakCount++;else{this.stats.currentStreakType=r;this.stats.currentStreakCount=1}
-            if(r==='T'&&this.stats.currentStreakCount>this.stats.longestTaiStreak)this.stats.longestTaiStreak=this.stats.currentStreakCount;
-            if(r==='X'&&this.stats.currentStreakCount>this.stats.longestXiuStreak)this.stats.longestXiuStreak=this.stats.currentStreakCount;
-            if(this.lastPrediction!==null){const p=this.lastPrediction?'T':'X',correct=p===r;this.predictionLog.push({phien:String(sd?sd.sessionId:''),xuc_xac:sd?sd.dice||'':'',tong:sd?sd.total||0:0,ket_qua:r==='T'?'Tài':'Xỉu',du_doan:p==='T'?'Tài':'Xỉu',danh_gia:correct?'DUNG':'SAI',do_tin_cay:'0%',timestamp:new Date().toISOString()});if(this.predictionLog.length>MAX_H)this.predictionLog.shift();correct?this.stats.correctPredictions++:this.stats.wrongPredictions++;const f=this.extractFeatures(),t=r==='T'?[1,0]:[0,1];this.nn.train(f,t)}
-        }catch(e){log('ERROR','addResult: '+e.message)}
-    }
-    getPredictionLog(l){const r=this.predictionLog.slice(-(l||50));r.reverse();return r}
-    getAccuracy(){return this.stats.totalSessions>0?(this.stats.correctPredictions/this.stats.totalSessions*100).toFixed(1)+'%':'0.0%'}
-    getRuntime(){const s=Math.floor((Date.now()-this.stats.startTime)/1000),m=Math.floor(s/60),h=Math.floor(m/60);return Math.floor(h/24)+'d '+h%24+'h '+m%60+'m'}
+class CircularBuffer {
+    constructor(cap) { this.buf = []; this.cap = cap; }
+    push(v) { this.buf.push(v); if (this.buf.length > this.cap) this.buf.shift(); }
+    last(n) { return this.buf.slice(-n); }
+    get length() { return this.buf.length; }
+    get(i) { return i < 0 ? this.buf[this.buf.length + i] : this.buf[i]; }
 }
 
-function connectWebSocket(){
-    log('INFO','Connecting WS...');
-    try{
-        const ws=new WebSocket(WS_URL);
-        ws.on('open',()=>{log('INFO','WS Connected!');ws.send(JSON.stringify({H:HUB_NAME,M:'Register',A:[],I:0}))});
-        ws.on('message',(data)=>{
-            try{
-                const msg=JSON.parse(data.toString());
-                if(msg.M==='Md5sessionInfo'&&msg.A&&msg.A.length>0){const s=msg.A[0];if(s.CurrentState===1&&s.Dice1>0){const d1=s.Dice1,d2=s.Dice2,d3=s.Dice3,total=d1+d2+d3,result=total>=11?'Tài':'Xỉu',sid=s.SessionId;engine.addResult(result,{sessionId:sid,total,dice:d1+'-'+d2+'-'+d3,timestamp:Date.now()});const p=engine.predict({sessionId:sid+1});console.log('#'+sid+': ['+d1+','+d2+','+d3+']='+total+'->'+result+' | Du doan: '+(p.prediction==='T'?'TAI':'XIU')+'('+p.confidence+'%) | Acc: '+engine.getAccuracy())}}
-            }catch(e){}
-        });
-        ws.on('close',()=>{log('WARN','WS closed');setTimeout(connectWebSocket,5000)});
-        ws.on('error',()=>setTimeout(connectWebSocket,5000));
-    }catch(e){setTimeout(connectWebSocket,5000)}
+// ==================== NEURAL NETWORK ====================
+class NeuralNetwork {
+    constructor() {
+        // 10 -> 8 -> 2
+        this.W1 = this._xavier(10, 8);
+        this.b1 = new Array(8).fill(0);
+        this.W2 = this._xavier(8, 2);
+        this.b2 = new Array(2).fill(0);
+        this.lr = 0.001;
+        this.momentum = 0.9;
+        this.vW1 = this._zeros(10, 8);
+        this.vb1 = new Array(8).fill(0);
+        this.vW2 = this._zeros(8, 2);
+        this.vb2 = new Array(2).fill(0);
+    }
+
+    _xavier(rows, cols) {
+        const scale = Math.sqrt(2 / (rows + cols));
+        return Array.from({ length: rows }, () => Array.from({ length: cols }, () => (Math.random() * 2 - 1) * scale));
+    }
+
+    _zeros(rows, cols) {
+        return Array.from({ length: rows }, () => new Array(cols).fill(0));
+    }
+
+    forward(input) {
+        // Hidden layer
+        this.z1 = new Array(8);
+        this.a1 = new Array(8);
+        for (let j = 0; j < 8; j++) {
+            this.z1[j] = this.b1[j];
+            for (let i = 0; i < 10; i++) this.z1[j] += this.W1[i][j] * input[i];
+            this.a1[j] = relu(this.z1[j]);
+        }
+        // Output layer
+        this.z2 = new Array(2);
+        for (let j = 0; j < 2; j++) {
+            this.z2[j] = this.b2[j];
+            for (let i = 0; i < 8; i++) this.z2[j] += this.W2[i][j] * this.a1[i];
+        }
+        this.a2 = softmax(this.z2);
+        return { tai: this.a2[0], xiu: this.a2[1] };
+    }
+
+    train(input, target) {
+        this.forward(input);
+        // Output error
+        const dz2 = [this.a2[0] - target[0], this.a2[1] - target[1]];
+        // Update W2, b2
+        for (let i = 0; i < 8; i++) {
+            for (let j = 0; j < 2; j++) {
+                const grad = dz2[j] * this.a1[i];
+                this.vW2[i][j] = this.momentum * this.vW2[i][j] - this.lr * grad;
+                this.W2[i][j] += this.vW2[i][j];
+            }
+        }
+        for (let j = 0; j < 2; j++) {
+            this.vb2[j] = this.momentum * this.vb2[j] - this.lr * dz2[j];
+            this.b2[j] += this.vb2[j];
+        }
+        // Hidden error
+        const dz1 = new Array(8);
+        for (let i = 0; i < 8; i++) {
+            dz1[i] = 0;
+            for (let j = 0; j < 2; j++) dz1[i] += dz2[j] * this.W2[i][j];
+            dz1[i] *= this.z1[i] > 0 ? 1 : 0; // ReLU derivative
+        }
+        // Update W1, b1
+        for (let i = 0; i < 10; i++) {
+            for (let j = 0; j < 8; j++) {
+                const grad = dz1[j] * input[i];
+                this.vW1[i][j] = this.momentum * this.vW1[i][j] - this.lr * grad;
+                this.W1[i][j] += this.vW1[i][j];
+            }
+        }
+        for (let j = 0; j < 8; j++) {
+            this.vb1[j] = this.momentum * this.vb1[j] - this.lr * dz1[j];
+            this.b1[j] += this.vb1[j];
+        }
+    }
+
+    save() { return { W1: this.W1, b1: this.b1, W2: this.W2, b2: this.b2, vW1: this.vW1, vb1: this.vb1, vW2: this.vW2, vb2: this.vb2 }; }
+    load(data) {
+        if (!data) return;
+        this.W1 = data.W1; this.b1 = data.b1; this.W2 = data.W2; this.b2 = data.b2;
+        this.vW1 = data.vW1; this.vb1 = data.vb1; this.vW2 = data.vW2; this.vb2 = data.vb2;
+    }
 }
 
-const server=http.createServer((req,res)=>{
-    res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET,OPTIONS');if(req.method==='OPTIONS'){res.writeHead(200);res.end();return}
-    const url=new URL(req.url,'http://localhost:'+API_PORT),pn=url.pathname;
-    try{
-        if(pn==='/health'){res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({status:'running',sessions:engine.stats.totalSessions,accuracy:engine.getAccuracy()}))}
-        else if(pn==='/api/predict'){const p=engine.predict({});res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({prediction:p.prediction==='T'?'Tài':'Xỉu',confidence:p.confidence,method:p.method}))}
-        else if(pn==='/api/stats'){res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({sessions:engine.stats.totalSessions,correct:engine.stats.correctPredictions,wrong:engine.stats.wrongPredictions,accuracy:engine.getAccuracy()}))}
-        else if(pn==='/api/prediction_log'){const l=parseInt(url.searchParams.get('limit')||'50');res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(engine.getPredictionLog(l)))}
-        else if(pn==='/'){const s=engine.stats;res.writeHead(200,{'Content-Type':'text/html;charset=utf-8'});res.end('<html><head><meta charset="utf-8"><title>XocDia88</title><meta http-equiv="refresh" content="5"><style>body{font-family:monospace;background:#0a0a0a;color:#0f0;padding:20px}</style></head><body><h1>XocDia88</h1><p>Sessions: '+s.totalSessions+'</p><p>Accuracy: '+engine.getAccuracy()+'</p><p>Correct: '+s.correctPredictions+' | Wrong: '+s.wrongPredictions+'</p><p>Runtime: '+engine.getRuntime()+'</p></body></html>')}
-        else{res.writeHead(404);res.end('Not found')}
-    }catch(e){res.writeHead(500);res.end(e.message)}
+// ==================== FEATURE EXTRACTION ====================
+function extractFeatures(history, sessions) {
+    const last20 = history.last(20);
+    const len = last20.length;
+    if (len === 0) return new Array(10).fill(0.5);
+
+    const taiCount = last20.filter(x => x === 'T').length;
+    const taiRatio5 = history.last(5).filter(x => x === 'T').length / Math.min(5, history.last(5).length || 1);
+    const taiRatio10 = history.last(10).filter(x => x === 'T').length / Math.min(10, history.last(10).length || 1);
+    const taiRatio20 = taiCount / len;
+
+    // Streak
+    const last = last20[len - 1];
+    let streak = 0;
+    for (let i = len - 1; i >= 0; i--) { if (last20[i] === last) streak++; else break; }
+    const streakLen = streak / 10;
+
+    // Last result one-hot
+    const lastResult = last === 'T' ? 1 : 0;
+
+    // Time since last session (seconds normalized)
+    const now = Date.now();
+    const lastSession = sessions.length > 0 ? sessions[sessions.length - 1] : null;
+    const timeSince = lastSession && lastSession.ts ? Math.min((now - lastSession.ts) / 60000, 10) / 10 : 0.5;
+
+    // Entropy
+    const pT = taiCount / len;
+    const pX = 1 - pT;
+    const entropy = (pT === 0 || pX === 0) ? 0 : -(pT * Math.log2(pT) + pX * Math.log2(pX));
+
+    // Change rate
+    let changes = 0;
+    for (let i = 1; i < len; i++) { if (last20[i] !== last20[i - 1]) changes++; }
+    const changeRate = changes / (len - 1 || 1);
+
+    // Imbalance
+    const imbalance = Math.abs(pT - 0.5) * 2;
+
+    // Trend (linear regression slope)
+    const x = last20.map((v, i) => v === 'T' ? 1 : 0);
+    const n = len;
+    const sumX = (n - 1) * n / 2;
+    const sumY = x.reduce((a, b) => a + b, 0);
+    const sumXY = x.reduce((s, v, i) => s + v * i, 0);
+    const sumX2 = x.reduce((s, _, i) => s + i * i, 0);
+    const trend = n * sumX2 - sumX * sumX !== 0 ? (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX) : 0;
+    const trendNorm = clamp(trend * 5 + 0.5, 0, 1);
+
+    return [taiRatio5, taiRatio10, taiRatio20, streakLen, lastResult, timeSince, entropy, changeRate, imbalance, trendNorm];
+}
+
+// ==================== PREDICTION ENGINE ====================
+class PredictionEngine {
+    constructor() {
+        this.history = new CircularBuffer(MAX_HISTORY);
+        this.sessions = [];
+        this.predictionLog = [];
+        this.lastPrediction = null;
+        this.lastSessionId = 0;
+        this.nn = new NeuralNetwork();
+        this.ensembleWeights = {};
+        this.ensembleCorrect = {};
+        this.ensembleTotal = {};
+        this.boostStreak = {};
+        this.stats = { total: 0, tai: 0, xiu: 0, correct: 0, wrong: 0, longestTai: 0, longestXiu: 0, curType: '', curStreak: 0 };
+        this._initPatterns();
+        this._load();
+    }
+
+    // ==================== 47 PATTERNS ====================
+    _initPatterns() {
+        const sl = (n) => this.history.last(n);
+        const lst = (n) => this.history.get(-n);
+        const cnt = (a, v) => a.filter(x => x === v).length;
+
+        this.patterns = [
+            { name: 'Bệt ngắn', check: () => { const h = sl(2); return h.length >= 2 && h[0] === h[1] ? h[0] === 'T' : null; }, weight: 0.5 },
+            { name: 'Bệt dài', check: () => { const h = sl(6); if (h.length < 6) return null; const c = cnt(h, h[0]); return c >= 6 ? h[0] === 'T' : null; }, weight: 0.85 },
+            { name: 'Đảo 1-1 ngắn', check: () => { if (this.history.length < 3) return null; const a = lst(1), b = lst(2), c = lst(3); return a === c && a !== b ? a === 'T' : null; }, weight: 0.72 },
+            { name: 'Đảo 1-1 dài', check: () => { if (this.history.length < 5) return null; const a = lst(1), b = lst(2), c = lst(3), d = lst(4), e = lst(5); return a === c && c === e && b === d && a !== b ? a === 'T' : null; }, weight: 0.78 },
+            { name: 'Cầu 1-2', check: () => { const h = sl(3); if (h.length < 3) return null; if (h[0] === h[1] && h[1] !== h[2]) return h[2] === 'T'; return null; }, weight: 0.65 },
+            { name: 'Cầu 2-1', check: () => { const h = sl(3); if (h.length < 3) return null; if (h[0] !== h[1] && h[1] === h[2]) return h[2] === 'T'; return null; }, weight: 0.65 },
+            { name: 'Kép 2-2', check: () => { const h = sl(4); if (h.length < 4) return null; if (h[0] === h[1] && h[2] === h[3] && h[0] !== h[2]) return h[3] === 'T'; return null; }, weight: 0.75 },
+            { name: 'Cầu 3-1', check: () => { const h = sl(4); if (h.length < 4) return null; if (h[0] === h[1] && h[1] === h[2] && h[2] !== h[3]) return h[3] !== 'T'; return null; }, weight: 0.68 },
+            { name: 'Cầu 2-1-2', check: () => { const h = sl(5); if (h.length < 5) return null; if (h[0] === h[1] && h[1] !== h[2] && h[2] === h[3] && h[3] === h[4]) return h[4] !== 'T'; return null; }, weight: 0.70 },
+            { name: 'Cầu thời gian nhanh', check: () => { const l = this.sessions.length; if (l < 2) return null; const dt = (this.sessions[l - 1].ts - this.sessions[l - 2].ts) / 1000; return dt < 15 ? lst(1) !== 'T' : null; }, weight: 0.50 },
+            { name: 'Cầu thời gian chậm', check: () => { const l = this.sessions.length; if (l < 2) return null; const dt = (this.sessions[l - 1].ts - this.sessions[l - 2].ts) / 1000; return dt > 45 ? lst(1) === 'T' : null; }, weight: 0.50 },
+            { name: 'Bệt siêu dài', check: () => { const h = sl(10); if (h.length < 10) return null; return cnt(h, h[0]) >= 10 ? h[0] === 'T' : null; }, weight: 0.95 },
+            { name: 'Bệt xen kẽ ngắn', check: () => { const h = sl(6); if (h.length < 6) return null; let s = 0; for (let i = h.length - 1; i >= 0; i--) { if (h[i] === h[h.length - 1]) s++; else break; } return s >= 3 ? h[h.length - 1] !== 'T' : null; }, weight: 0.60 },
+            { name: 'Bệt gãy nhẹ', check: () => { const h = sl(7); if (h.length < 7) return null; let s = 0; for (let i = h.length - 1; i >= 0; i--) { if (h[i] === h[h.length - 1]) s++; else break; } return s >= 4 ? h[h.length - 1] !== 'T' : null; }, weight: 0.65 },
+            { name: 'Đảo 1-1', check: () => { if (this.history.length < 4) return null; return lst(1) === lst(3) && lst(1) !== lst(2) ? lst(1) !== 'T' : null; }, weight: 0.72 },
+            { name: 'Kép 2-2 mở rộng', check: () => { const h = sl(4); if (h.length < 4) return null; if (h[0] === h[1] && h[2] === h[3] && h[0] !== h[2]) return h[3] !== 'T'; return null; }, weight: 0.75 },
+            { name: '3-3', check: () => { const h = sl(6); if (h.length < 6) return null; if (h[0] === h[1] && h[1] === h[2] && h[3] === h[4] && h[4] === h[5] && h[0] !== h[3]) return h[5] !== 'T'; return null; }, weight: 0.78 },
+            { name: 'Chu kỳ 2', check: () => { const h = sl(4); if (h.length < 4) return null; if (h[0] === h[2] && h[1] === h[3] && h[0] !== h[1]) return h[3] !== 'T'; return null; }, weight: 0.68 },
+            { name: 'Chu kỳ 3', check: () => { const h = sl(6); if (h.length < 6) return null; if (h[0] === h[3] && h[1] === h[4] && h[2] === h[5] && h[0] !== h[1]) return h[5] !== 'T'; return null; }, weight: 0.65 },
+            { name: 'Lặp 2-1', check: () => { const h = sl(2); return h.length >= 2 ? h[0] === 'T' : null; }, weight: 0.55 },
+            { name: 'Lặp 3-2', check: () => { const h = sl(2); return h.length >= 2 ? h[0] === 'T' : null; }, weight: 0.55 },
+            { name: 'Đối xứng', check: () => { const h = sl(5); if (h.length < 5) return null; const rev = [...h].reverse(); if (h.join('') === rev.join('')) return h[0] !== 'T'; return null; }, weight: 0.78 },
+            { name: 'Bán đối xứng', check: () => { const h = sl(5); if (h.length < 5) return null; const rev = [...h].reverse(); let m = 0; for (let i = 0; i < 5; i++) if (h[i] === rev[i]) m++; return m >= 4 ? h[2] !== 'T' : null; }, weight: 0.62 },
+            { name: 'Bệt ngược', check: () => { const h = sl(6); if (h.length < 6) return null; const l = h[h.length - 1]; let s = 0; for (let i = h.length - 1; i >= 0; i--) { if (h[i] === l) s++; else break; } return s >= 6 ? l !== 'T' : null; }, weight: 0.75 },
+            { name: 'Xỉu kép', check: () => { const h = sl(2); return h.length >= 2 && h[0] === 'X' && h[1] === 'X' ? false : null; }, weight: 0.55 },
+            { name: 'Tài kép', check: () => { const h = sl(2); return h.length >= 2 && h[0] === 'T' && h[1] === 'T' ? true : null; }, weight: 0.55 },
+            { name: 'Xen kẽ', check: () => { const h = sl(7); if (h.length < 7) return null; for (let i = 1; i < 7; i++) if (h[i] === h[i - 1]) return null; return h[6] !== 'T'; }, weight: 0.72 },
+            { name: 'Gập ghềnh', check: () => { const h = sl(10); if (h.length < 10) return null; return cnt(h, 'T') >= 6 ? false : null; }, weight: 0.55 },
+            { name: 'Bậc thang', check: () => { const h = sl(5); if (h.length < 5) return null; for (let i = 1; i < 5; i++) if (h[i] === h[i - 1]) return null; return h[4] !== 'T'; }, weight: 0.60 },
+            { name: 'Gãy ngang', check: () => { const h = sl(6); if (h.length < 6) return null; const l = h[h.length - 1]; let s = 0; for (let i = h.length - 1; i >= 0; i--) { if (h[i] === l) s++; else break; } return s >= 3 ? l !== 'T' : null; }, weight: 0.62 },
+            { name: 'Cầu đôi', check: () => { const h = sl(4); if (h.length < 4) return null; if (h[0] === h[1] && h[2] === h[3]) return h[3] !== 'T'; return null; }, weight: 0.68 },
+            { name: 'Ngẫu nhiên', check: () => Math.random() > 0.5, weight: 0.50 },
+            { name: 'Đa dạng', check: () => { const h = sl(10); if (h.length < 10) return null; return new Set(h).size >= 4 ? h[h.length - 1] !== 'T' : null; }, weight: 0.58 },
+            { name: 'Chu kỳ tăng', check: () => { const h = sl(6); if (h.length < 6) return null; let s = []; let c = 1; for (let i = h.length - 2; i >= 0; i--) { if (h[i] === h[i + 1]) c++; else { s.push(c); c = 1; } } s.push(c); for (let i = 1; i < s.length; i++) if (s[i] <= s[i - 1]) return null; return h[h.length - 1] !== 'T'; }, weight: 0.60 },
+            { name: 'Chu kỳ giảm', check: () => { const h = sl(6); if (h.length < 6) return null; let s = []; let c = 1; for (let i = h.length - 2; i >= 0; i--) { if (h[i] === h[i + 1]) c++; else { s.push(c); c = 1; } } s.push(c); for (let i = 1; i < s.length; i++) if (s[i] >= s[i - 1]) return null; return h[h.length - 1] !== 'T'; }, weight: 0.60 },
+            { name: 'Cầu lặp', check: () => { const h = sl(6); return h.length >= 6 ? h[0] === 'T' : null; }, weight: 0.55 },
+            { name: 'Đối ngược', check: () => { const h = sl(4); if (h.length < 4) return null; return h[0] !== h[1] && h[1] === h[2] && h[2] !== h[3] ? h[3] !== 'T' : null; }, weight: 0.65 },
+            { name: 'Phân cụm', check: () => { const h = sl(10); if (h.length < 10) return null; return cnt(h, 'T') > 5 ? true : null; }, weight: 0.62 },
+            { name: 'Lệch ngẫu nhiên', check: () => { const h = sl(10); if (h.length < 10) return null; const t = cnt(h, 'T'); return t >= 5 ? false : true; }, weight: 0.58 },
+            { name: 'Xen kẽ dài', check: () => { const h = sl(8); if (h.length < 8) return null; for (let i = 1; i < 8; i++) if (h[i] === h[i - 1]) return null; return h[7] !== 'T'; }, weight: 0.72 },
+            { name: 'Cầu gập', check: () => { const h = sl(6); if (h.length < 6) return null; const l = h[h.length - 1]; let s = 0; for (let i = h.length - 1; i >= 0; i--) { if (h[i] === l) s++; else break; } return s >= 4 ? l !== 'T' : null; }, weight: 0.65 },
+            { name: 'Xỉu lắc', check: () => { const h = sl(5); if (h.length < 5) return null; return h[h.length - 1] === 'X' && h[h.length - 2] === 'T' ? false : null; }, weight: 0.55 },
+            { name: 'Tài lắc', check: () => { const h = sl(5); if (h.length < 5) return null; return h[h.length - 1] === 'T' && h[h.length - 2] === 'X' ? true : null; }, weight: 0.55 },
+            { name: 'Phối hợp 1', check: () => { const h = sl(10); if (h.length < 10) return null; return cnt(h, 'T') > 5 ? true : null; }, weight: 0.55 },
+            { name: 'Phối hợp 2', check: () => { const h = sl(20); if (h.length < 20) return null; const t = cnt(h, 'T'); return t >= (h.length - t); }, weight: 0.50 },
+            { name: 'Phối hợp 3', check: () => { const h = sl(20); if (h.length < 20) return null; const t = cnt(h, 'T'); return t >= (h.length - t); }, weight: 0.50 },
+            { name: 'Ngẫu nhiên bệt', check: () => { const h = sl(5); if (h.length < 5) return null; const l = h[h.length - 1]; let s = 0; for (let i = h.length - 1; i >= 0; i--) { if (h[i] === l) s++; else break; } return s >= 4 ? l === 'T' : null; }, weight: 0.60 },
+        ];
+    }
+
+    // ==================== ENSEMBLE VOTING ====================
+    _ensembleVote() {
+        let votesT = 0, votesX = 0, totalWeight = 0;
+        const details = [];
+
+        for (const p of this.patterns) {
+            const result = p.check();
+            if (result === null) continue;
+
+            const acc = this.ensembleTotal[p.name] > 0
+                ? (this.ensembleCorrect[p.name] || 0) / this.ensembleTotal[p.name]
+                : 0.5;
+            const boost = clamp((this.boostStreak[p.name] || 0) * 0.05 + 1, 0.8, 1.2);
+            const penalty = clamp(1 - ((this.ensembleTotal[p.name] - (this.ensembleCorrect[p.name] || 0)) || 0) * 0.02, 0.8, 1.2);
+            const finalWeight = p.weight * acc * boost * penalty;
+
+            if (result === true) votesT += finalWeight;
+            else votesX += finalWeight;
+            totalWeight += finalWeight;
+            details.push({ name: p.name, vote: result ? 'T' : 'X', weight: finalWeight });
+        }
+
+        if (totalWeight === 0) return { prediction: 'X', confidence: 50, details: [] };
+
+        const margin = Math.abs(votesT - votesX) / totalWeight;
+        const prediction = votesT > votesX ? 'T' : 'X';
+        const confidence = Math.round(margin * 100);
+
+        return { prediction, confidence, details: details.sort((a, b) => b.weight - a.weight).slice(0, 10) };
+    }
+
+    // ==================== PREDICT ====================
+    predict() {
+        // Warmup
+        if (this.history.length < MIN_SESSIONS) {
+            const features = extractFeatures(this.history, this.sessions);
+            const nnOut = this.nn.forward(features);
+            const pred = nnOut.tai > nnOut.xiu ? 'T' : 'X';
+            this.lastPrediction = pred;
+            return { prediction: pred === 'T' ? 'Tài' : 'Xỉu', confidence: Math.round(Math.max(nnOut.tai, nnOut.xiu) * 100), reason: 'Warmup NN', method: 'warmup' };
+        }
+
+        const ensemble = this._ensembleVote();
+        const features = extractFeatures(this.history, this.sessions);
+        const nnOut = this.nn.forward(features);
+
+        // Strong ensemble
+        if (ensemble.confidence > 72) {
+            this.lastPrediction = ensemble.prediction;
+            return { prediction: ensemble.prediction === 'T' ? 'Tài' : 'Xỉu', confidence: ensemble.confidence, reason: ensemble.details[0]?.name || 'Ensemble', method: 'strong_ensemble', details: ensemble.details };
+        }
+
+        // Medium: combine ensemble + NN
+        if (ensemble.confidence > 55) {
+            const nnPred = nnOut.tai > nnOut.xiu ? 'T' : 'X';
+            const nnConf = Math.round(Math.max(nnOut.tai, nnOut.xiu) * 100);
+            const combinedPred = ensemble.confidence * 0.6 > nnConf * 0.4 ? ensemble.prediction : nnPred;
+            const combinedConf = Math.round(ensemble.confidence * 0.6 + nnConf * 0.4);
+            this.lastPrediction = combinedPred;
+            return { prediction: combinedPred === 'T' ? 'Tài' : 'Xỉu', confidence: combinedConf, reason: 'Hybrid: ' + (ensemble.details[0]?.name || 'Ensemble') + ' + NN', method: 'medium_hybrid' };
+        }
+
+        // Fallback: pure NN
+        const pred = nnOut.tai > nnOut.xiu ? 'T' : 'X';
+        const conf = Math.round(Math.max(nnOut.tai, nnOut.xiu) * 100);
+        this.lastPrediction = pred;
+        return { prediction: pred === 'T' ? 'Tài' : 'Xỉu', confidence: conf, reason: 'Neural Network', method: 'nn_fallback' };
+    }
+
+    // ==================== ADD RESULT & LEARN ====================
+    addResult(resultInput, sessionData = {}) {
+        const n = String(resultInput).toLowerCase().trim();
+        let actual = null;
+        if (n === 'tài' || n === 'tai' || n === 't' || n === '1') actual = 'T';
+        else if (n === 'xỉu' || n === 'xiu' || n === 'x' || n === '0') actual = 'X';
+        else if (n.includes('tài') || n.includes('tai')) actual = 'T';
+        else if (n.includes('xỉu') || n.includes('xiu')) actual = 'X';
+        else return null;
+
+        const sid = sessionData.sessionId || sessionData.id || 0;
+        const total = sessionData.total || 0;
+        const dice = sessionData.dice || '?-?-?';
+
+        // Update stats
+        if (this.lastPrediction) {
+            const correct = this.lastPrediction === actual;
+            if (correct) this.stats.correct++;
+            else this.stats.wrong++;
+
+            // Update last prediction log
+            const lastLog = this.predictionLog[this.predictionLog.length - 1];
+            if (lastLog && !lastLog.danh_gia) {
+                lastLog.xuc_xac = dice;
+                lastLog.tong = total;
+                lastLog.ket_qua = actual === 'T' ? 'Tài' : 'Xỉu';
+                lastLog.danh_gia = correct ? '✅ ĐÚNG' : '❌ SAI';
+
+                // Update ensemble weights
+                if (lastLog.details) {
+                    for (const d of lastLog.details) {
+                        if (!this.ensembleTotal[d.name]) this.ensembleTotal[d.name] = 0;
+                        if (!this.ensembleCorrect[d.name]) this.ensembleCorrect[d.name] = 0;
+                        this.ensembleTotal[d.name]++;
+                        if ((d.vote === 'T' && actual === 'T') || (d.vote === 'X' && actual === 'X')) {
+                            this.ensembleCorrect[d.name]++;
+                            this.boostStreak[d.name] = (this.boostStreak[d.name] || 0) + 1;
+                        } else {
+                            this.boostStreak[d.name] = (this.boostStreak[d.name] || 0) - 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update streaks
+        if (this.stats.curType === actual) this.stats.curStreak++;
+        else { this.stats.curType = actual; this.stats.curStreak = 1; }
+        if (actual === 'T') { this.stats.tai++; if (this.stats.curStreak > this.stats.longestTai) this.stats.longestTai = this.stats.curStreak; }
+        else { this.stats.xiu++; if (this.stats.curStreak > this.stats.longestXiu) this.stats.longestXiu = this.stats.curStreak; }
+        this.stats.total++;
+
+        this.history.push(actual);
+        this.sessions.push({ ts: Date.now(), sid, result: actual, total, dice });
+
+        // Neural network online learning
+        if (this.history.length >= 2) {
+            const features = extractFeatures(this.history, this.sessions);
+            const target = actual === 'T' ? [1, 0] : [0, 1];
+            this.nn.train(features, target);
+        }
+
+        // Save periodically
+        if (this.stats.total % 50 === 0) this._save();
+        return actual;
+    }
+
+    logPrediction(sid, prediction) {
+        const entry = {
+            phien: String(sid),
+            xuc_xac: '?-?-?',
+            tong: 0,
+            ket_qua: '',
+            du_doan: prediction.prediction,
+            danh_gia: '',
+            do_tin_cay: prediction.confidence + '%',
+            timestamp: new Date().toISOString(),
+            reason: prediction.reason,
+            method: prediction.method,
+            details: prediction.details || []
+        };
+        this.predictionLog.push(entry);
+        if (this.predictionLog.length > 10000) this.predictionLog.shift();
+        return entry;
+    }
+
+    // ==================== PERSISTENCE ====================
+    _save() {
+        try {
+            const data = {
+                history: this.history.buf.slice(-1000),
+                sessions: this.sessions.slice(-1000),
+                stats: this.stats,
+                ensembleTotal: this.ensembleTotal,
+                ensembleCorrect: this.ensembleCorrect,
+                boostStreak: this.boostStreak,
+                nn: this.nn.save(),
+                predictionLog: this.predictionLog.slice(-5000)
+            };
+            fs.writeFileSync(path.join(DATA_DIR, 'state.json'), JSON.stringify(data));
+        } catch (_) {}
+    }
+
+    _load() {
+        try {
+            const file = path.join(DATA_DIR, 'state.json');
+            if (fs.existsSync(file)) {
+                const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+                if (data.history) { this.history = new CircularBuffer(MAX_HISTORY); data.history.forEach(v => this.history.push(v)); }
+                if (data.sessions) this.sessions = data.sessions;
+                if (data.stats) this.stats = data.stats;
+                if (data.ensembleTotal) this.ensembleTotal = data.ensembleTotal;
+                if (data.ensembleCorrect) this.ensembleCorrect = data.ensembleCorrect;
+                if (data.boostStreak) this.boostStreak = data.boostStreak;
+                if (data.nn) this.nn.load(data.nn);
+                if (data.predictionLog) this.predictionLog = data.predictionLog;
+                log('INIT', `Loaded ${this.history.length} sessions, accuracy: ${this.getAccuracy()}%`);
+            }
+        } catch (_) {}
+    }
+
+    getAccuracy() {
+        const t = this.stats.correct + this.stats.wrong;
+        return t === 0 ? 0 : Math.round(this.stats.correct / t * 100);
+    }
+
+    getPredictionLog(limit = 50) {
+        return this.predictionLog.slice(-limit).reverse();
+    }
+}
+
+// ==================== MAIN ====================
+const engine = new PredictionEngine();
+
+function connectWebSocket() {
+    if (!WS_URL) { log('ERROR', 'WS_URL not set'); return; }
+    log('WS', 'Connecting...');
+    const ws = new WebSocket(WS_URL);
+
+    ws.on('open', () => {
+        log('WS', 'Connected');
+        ws.send(JSON.stringify({ H: HUB_NAME, M: 'Register', A: [], I: 0 }));
+        setInterval(() => {
+            if (ws.readyState === 1) ws.send(JSON.stringify({ H: HUB_NAME, M: 'Ping', A: [], I: Date.now() }));
+        }, 60000);
+    });
+
+    ws.on('message', (raw) => {
+        try {
+            const msg = JSON.parse(raw.toString());
+            if (!msg.M) return;
+            for (const m of msg.M) {
+                if (m.M === 'Md5sessionInfo') {
+                    const s = m.A[0];
+                    if (s.CurrentState === 0 && s.Ellapsed > 0) {
+                        process.stdout.write(`\r⏳ ${s.Ellapsed}s | 🎯 ${engine.getAccuracy()}% | 📊 ${engine.stats.total} phiên   `);
+                    }
+                    if (s.CurrentState === 1 && s.Result && s.Result.Dice1 > 0 && s.SessionID !== engine.lastSessionId) {
+                        engine.lastSessionId = s.SessionID;
+                        const d1 = s.Result.Dice1, d2 = s.Result.Dice2, d3 = s.Result.Dice3;
+                        const total = d1 + d2 + d3;
+                        const result = total >= 11 ? 'Tài' : 'Xỉu';
+                        engine.addResult(result, { sessionId: s.SessionID, total, dice: `${d1}-${d2}-${d3}` });
+                        const prediction = engine.predict();
+                        engine.logPrediction(s.SessionID + 1, prediction);
+                        console.log(`\n┌──────────────────────────────────────────┐`);
+                        console.log(`│ #${s.SessionID} | 🎲[${d1},${d2},${d3}]=${total} | ${result}`);
+                        console.log(`│ 🎯 ${engine.getAccuracy()}% | 📊 ${engine.stats.total}`);
+                        console.log(`├──────────────────────────────────────────┤`);
+                        console.log(`│ 🔮 DỰ ĐOÁN: ${prediction.prediction} (${prediction.confidence}%)`);
+                        console.log(`│ 💡 ${prediction.reason}`);
+                        console.log(`│ 📜 ${engine.history.last(15).map(x => x === 'T' ? 'T' : 'X').join(' ')}`);
+                        console.log(`└──────────────────────────────────────────┘\n`);
+                    }
+                }
+            }
+        } catch (_) {}
+    });
+
+    ws.on('close', () => { log('WS', 'Disconnected, retry in 5s...'); setTimeout(connectWebSocket, 5000); });
+    ws.on('error', (e) => { log('WS', 'Error: ' + e.message); ws.close(); });
+}
+
+// ==================== API SERVER ====================
+const server = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const url = new URL(req.url, `http://localhost:${API_PORT}`);
+
+    if (url.pathname === '/health') {
+        res.end(JSON.stringify({ status: 'ok', version: 'v5-ensemble', patterns: 47, sessions: engine.stats.total, accuracy: engine.getAccuracy() }));
+    } else if (url.pathname === '/api/predict') {
+        const p = engine.predict();
+        res.end(JSON.stringify({ prediction: p.prediction, confidence: p.confidence, reason: p.reason, method: p.method }));
+    } else if (url.pathname === '/api/stats') {
+        res.end(JSON.stringify({ sessions: engine.stats.total, correct: engine.stats.correct, wrong: engine.stats.wrong, accuracy: engine.getAccuracy() }));
+    } else if (url.pathname === '/api/prediction_log') {
+        res.end(JSON.stringify(engine.getPredictionLog(parseInt(url.searchParams.get('limit') || '50'))));
+    } else if (url.pathname === '/api/reset') {
+        engine.stats.correct = 0; engine.stats.wrong = 0;
+        res.end(JSON.stringify({ status: 'ok' }));
+    } else {
+        res.end(JSON.stringify({ name: 'XocDia88 Ensemble', version: 'v5', patterns: 47, accuracy: engine.getAccuracy() }));
+    }
 });
 
-const engine=new PredictionEngine();ensureDir();connectWebSocket();setInterval(()=>{engine.saveHistory();engine.savePredictionLog()},SAVE_MS);server.listen(API_PORT,()=>console.log('XocDia88 port '+API_PORT));process.on('SIGINT',()=>{engine.saveHistory();engine.savePredictionLog();process.exit(0)});
+ensureDir();
+server.listen(API_PORT, () => console.log(`API: http://localhost:${API_PORT}`));
+
+console.log('╔══════════════════════════════════╗');
+console.log('║  XOCDIA88 ENSEMBLE AI v5        ║');
+console.log('║  47 Patterns + NN + Adaptive    ║');
+console.log('╚══════════════════════════════════╝');
+
+connectWebSocket();
+
+process.on('SIGINT', () => { engine._save(); process.exit(0); });
