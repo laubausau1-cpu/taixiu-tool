@@ -1926,3 +1926,6 @@ process.on('SIGINT', function() {
     engine.savePatternWeights();
     log('INFO', 'Đã lưu dữ liệu. Tạm biệt!');
     process.exit(0);
+});
+
+
