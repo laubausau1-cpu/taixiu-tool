@@ -2129,7 +2129,7 @@ function connectWebSocket() {
             // Log đã gửi đăng ký
             log('INFO', 'Đã gửi đăng ký hub: ' + HUB_NAME)
 
-            // Gửi ping mỗi 60 giây để giữ kết nối
+            // Gửi ping mỗi 10 giây để giữ kết nối
             pingInterval = setInterval(function() {
                 // Kiểm tra kết nối còn mở
                 if (ws.readyState === WebSocket.OPEN) {
@@ -2141,7 +2141,7 @@ function connectWebSocket() {
                         I: 0
                     }) + '\n')
                 }
-            }, 60000)
+            }, 10000)
         })
 
         // Xử lý khi nhận message
