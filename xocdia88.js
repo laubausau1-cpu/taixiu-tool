@@ -1926,9 +1926,3 @@ process.on('SIGINT', function() {
     engine.savePatternWeights();
     log('INFO', 'Đã lưu dữ liệu. Tạm biệt!');
     process.exit(0);
-});
-ENDOFFILE
-
-echo "DONE - xocdia88.js da duoc tao"
-echo "Chay: WS_URL='wss://...' node xocdia88.js"
-
