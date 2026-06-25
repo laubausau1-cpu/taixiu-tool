@@ -1,3 +1,5 @@
+// xocdia88.js — Ensemble AI Prediction Engine (47 patterns + NN + Adaptive Learning)
+// Chạy: node xocdia88.js [ws_url]
 
 const WebSocket = require('ws');
 const fs = require('fs');
@@ -37,7 +39,6 @@ class CircularBuffer {
 // ==================== NEURAL NETWORK ====================
 class NeuralNetwork {
     constructor() {
-        // 10 -> 8 -> 2
         this.W1 = this._xavier(10, 8);
         this.b1 = new Array(8).fill(0);
         this.W2 = this._xavier(8, 2);
@@ -60,7 +61,6 @@ class NeuralNetwork {
     }
 
     forward(input) {
-        // Hidden layer
         this.z1 = new Array(8);
         this.a1 = new Array(8);
         for (let j = 0; j < 8; j++) {
@@ -68,7 +68,6 @@ class NeuralNetwork {
             for (let i = 0; i < 10; i++) this.z1[j] += this.W1[i][j] * input[i];
             this.a1[j] = relu(this.z1[j]);
         }
-        // Output layer
         this.z2 = new Array(2);
         for (let j = 0; j < 2; j++) {
             this.z2[j] = this.b2[j];
@@ -80,9 +79,7 @@ class NeuralNetwork {
 
     train(input, target) {
         this.forward(input);
-        // Output error
         const dz2 = [this.a2[0] - target[0], this.a2[1] - target[1]];
-        // Update W2, b2
         for (let i = 0; i < 8; i++) {
             for (let j = 0; j < 2; j++) {
                 const grad = dz2[j] * this.a1[i];
@@ -94,14 +91,12 @@ class NeuralNetwork {
             this.vb2[j] = this.momentum * this.vb2[j] - this.lr * dz2[j];
             this.b2[j] += this.vb2[j];
         }
-        // Hidden error
         const dz1 = new Array(8);
         for (let i = 0; i < 8; i++) {
             dz1[i] = 0;
             for (let j = 0; j < 2; j++) dz1[i] += dz2[j] * this.W2[i][j];
-            dz1[i] *= this.z1[i] > 0 ? 1 : 0; // ReLU derivative
+            dz1[i] *= this.z1[i] > 0 ? 1 : 0;
         }
-        // Update W1, b1
         for (let i = 0; i < 10; i++) {
             for (let j = 0; j < 8; j++) {
                 const grad = dz1[j] * input[i];
@@ -134,34 +129,27 @@ function extractFeatures(history, sessions) {
     const taiRatio10 = history.last(10).filter(x => x === 'T').length / Math.min(10, history.last(10).length || 1);
     const taiRatio20 = taiCount / len;
 
-    // Streak
     const last = last20[len - 1];
     let streak = 0;
     for (let i = len - 1; i >= 0; i--) { if (last20[i] === last) streak++; else break; }
     const streakLen = streak / 10;
 
-    // Last result one-hot
     const lastResult = last === 'T' ? 1 : 0;
 
-    // Time since last session (seconds normalized)
     const now = Date.now();
     const lastSession = sessions.length > 0 ? sessions[sessions.length - 1] : null;
     const timeSince = lastSession && lastSession.ts ? Math.min((now - lastSession.ts) / 60000, 10) / 10 : 0.5;
 
-    // Entropy
     const pT = taiCount / len;
     const pX = 1 - pT;
     const entropy = (pT === 0 || pX === 0) ? 0 : -(pT * Math.log2(pT) + pX * Math.log2(pX));
 
-    // Change rate
     let changes = 0;
     for (let i = 1; i < len; i++) { if (last20[i] !== last20[i - 1]) changes++; }
     const changeRate = changes / (len - 1 || 1);
 
-    // Imbalance
     const imbalance = Math.abs(pT - 0.5) * 2;
 
-    // Trend (linear regression slope)
     const x = last20.map((v, i) => v === 'T' ? 1 : 0);
     const n = len;
     const sumX = (n - 1) * n / 2;
