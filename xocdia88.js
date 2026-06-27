@@ -52,7 +52,7 @@ class PredictionEngine{
         {const st=this.getStreak(h);if(st>=3&&st<=5)add('12.Bệt xen kẽ',h[h.length-1]!=='T',0.55);}
         {const st=this.getStreak(h);if(st>=4&&st<=7)add('13.Bệt gãy nhẹ',h[h.length-1]!=='T',0.65);}
         if(h.length>=2&&lst(1)!==lst(2))add('14.Đảo 1-1',lst(2)==='T',0.58);}
-        {const l4=sl(4);if(l4.length===4&&((l4[0]===l4[1]&&l4[2]===l4[3]&&l4[0]!==l4[2])||(l4[0]===l4[2]&&l4[1]===l4[3]&&l4[0]!==l4[1])))add('15.Kép 2-2 MR',l4[3]!=='T',0.72);}
+        {const l4=sl(4);if(l4.length===4&&((l4[0]===l4[1]&&l4[2]===l4[3]&&l4[0]!==l4[2])||(l4[0]===l4[2]&&l4[1]===l4[3]&&l4[0]!==l4[1])))add('15.Kép 2-2 MR',l4[3]!=='T',0.72);
         {const l6=sl(6);if(l6.length===6&&l6[0]===l6[1]&&l6[1]===l6[2]&&l6[3]===l6[4]&&l6[4]===l6[5]&&l6[0]!==l6[3])add('16.3-3',l6[5]!=='T',0.78);}
         {const l4=sl(4);if(l4.length===4&&l4[0]===l4[2]&&l4[1]===l4[3]&&l4[0]!==l4[1])add('17.Chu kỳ 2',l4[3]!=='T',0.68);}
         {const l6=sl(6);if(l6.length===6&&l6[0]===l6[3]&&l6[1]===l6[4]&&l6[2]===l6[5]&&l6[0]!==l6[1])add('18.Chu kỳ 3',l6[5]!=='T',0.65);}
