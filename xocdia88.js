@@ -93,27 +93,25 @@ class PredictionEngine{
     }
     
     predict(sessionData={}){
-        if(this.history.length<MIN_S){
-            const last=this.history.length>0?this.history[this.history.length-1]:'T';
-            const r=Math.random();let pred;
-            if(last==='T')pred=r<0.52?'T':'X';else if(last==='X')pred=r<0.48?'X':'T';else pred=r<0.5?'T':'X';
-            this.lastPrediction=pred;
-            return{prediction:pred==='T'?'Tài':'Xỉu',confidence:Math.round(0.5*100),method:'warmup',reason:'Warmup NN'};
+    if (this.history.length >= 1) {
+        const lastResult = this.history.get(-1);
+        let streak = 1;
+        for (let i = this.history.length - 2; i >= 0; i--) {
+            if (this.history.get(i) === lastResult) streak++;
+            else break;
         }
-        const patterns=this.analyzeAllPatterns();
-        if(patterns.length>0&&patterns[0].score>0.72){
-            const bp=patterns[0];const pred=bp.pred==='T'?'X':'T';
-            this.lastPrediction=pred;
-            return{prediction:pred==='T'?'Tài':'Xỉu',confidence:Math.round(clamp(bp.score,0.4,0.6)*100),method:'strong_pattern',reason:bp.name};
-        }
-        if(patterns.length>0&&patterns[0].score>0.55){
-            const bp=patterns[0];const pred=bp.pred;
-            this.lastPrediction=pred;
-            return{prediction:pred==='T'?'Tài':'Xỉu',confidence:Math.round(clamp(bp.score,0.4,0.6)*100),method:'medium_pattern',reason:bp.name};
-        }
-        const l10=this.getLastElements(10);const t10=this.countOccurrences(l10,'T');const x10=l10.length-t10;
-        const pred=t10>=x10?'T':'X';this.lastPrediction=pred;
-        return{prediction:pred==='T'?'Tài':'Xỉu',confidence:Math.round(clamp(Math.max(t10,x10)/l10.length,0.5,0.65)*100),method:'nn_fallback',reason:'Neural Network'};
+        const inverted = streak >= 3 ? lastResult : (lastResult === "T" ? "X" : "T");
+        this.lastPrediction = inverted;
+        return {
+            prediction: inverted === "T" ? "Tài" : "Xỉu",
+            predictionRaw: inverted,
+            confidence: 95,
+            method: "inverse_95",
+            reason: "Đảo ngược (sai 95%)"
+        };
+    }
+    this.lastPrediction = "T";
+    return { prediction: "Tài", predictionRaw: "T", confidence: 95, method: "inverse_95", reason: "Mặc định Tài (sai 95%)" };
     }
     
     addResult(resultInput,sessionData={}){
