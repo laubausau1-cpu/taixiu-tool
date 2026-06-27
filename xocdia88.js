@@ -124,7 +124,7 @@ class PredictionEngine{
             if(correct)this.stats.correctPredictions++;else this.stats.wrongPredictions++;
             const lastLog=this.predictionLog[this.predictionLog.length-1];
             if(lastLog&&(!lastLog.danh_gia||lastLog.danh_gia==='')){
-                lastLog.ket_qua_thuc_te=actual==='T'?'Tài':'Xỉu';
+                lastLog.ket_qua=actual==='T'?'Tài':'Xỉu';
                 lastLog.danh_gia=correct?'✅ ĐÚNG':'❌ SAI';
             }
             if(lastLog&&lastLog.patterns&&lastLog.patterns.length>0){
