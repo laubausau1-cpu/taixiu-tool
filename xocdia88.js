@@ -93,25 +93,19 @@ class PredictionEngine{
     }
     
     predict(sessionData={}){
-    if (this.history.length >= 1) {
-        const lastResult = this.history.get(-1);
-        let streak = 1;
-        for (let i = this.history.length - 2; i >= 0; i--) {
-            if (this.history.get(i) === lastResult) streak++;
-            else break;
-        }
-        const inverted = streak >= 3 ? lastResult : (lastResult === "T" ? "X" : "T");
-        this.lastPrediction = inverted;
-        return {
-            prediction: inverted === "T" ? "Tài" : "Xỉu",
-            predictionRaw: inverted,
-            confidence: 95,
-            method: "inverse_95",
-            reason: "Đảo ngược (sai 95%)"
-        };
+    // LUÔN ĐOÁN SAI: Chọn kết quả ít khả năng nhất
+    if (this.history.length >= 2) {
+        const last = this.history.get(-1);
+        const prev = this.history.get(-2);
+        // Nếu đang xen kẽ -> đoán theo (sai vì sẽ gãy)
+        // Nếu đang bệt -> đoán đảo (sai vì sẽ bệt tiếp)
+        const fool = last === prev ? (last === "T" ? "X" : "T") : last;
+        this.lastPrediction = fool;
+        return { prediction: fool === "T" ? "Tài" : "Xỉu", predictionRaw: fool, confidence: 96, method: "always_wrong", reason: "Đoán sai có chủ đích" };
     }
-    this.lastPrediction = "T";
-    return { prediction: "Tài", predictionRaw: "T", confidence: 95, method: "inverse_95", reason: "Mặc định Tài (sai 95%)" };
+    const r = Math.random() < 0.5 ? "T" : "X";
+    this.lastPrediction = r;
+    return { prediction: r === "T" ? "Tài" : "Xỉu", predictionRaw: r, confidence: 96, method: "always_wrong", reason: "Đoán sai" };
     }
     
     addResult(resultInput,sessionData={}){
