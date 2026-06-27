@@ -1,6 +1,5 @@
 {
   "history": [],
-  "sessions": [],
   "stats": {
     "totalSessions": 0,
     "totalTai": 0,
@@ -11,7 +10,6 @@
     "longestXiuStreak": 0,
     "currentStreakType": null,
     "currentStreakCount": 0,
-    "startTime": 1782353337585
-  },
-  "savedAt": "2026-06-25T02:09:14.353Z"
+    "startTime": 1782371518817
+  }
 }
