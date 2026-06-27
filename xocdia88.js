@@ -143,6 +143,8 @@ class PredictionEngine{
     }
     
     logPrediction(sid,prediction){
+    const exists=this.predictionLog.find(p=>p.phien===String(parseInt(sid)+1)&&p.danh_gia==="");
+    if(exists)return exists;
         const e={phien:String(parseInt(sid)+1),xuc_xac:prediction.dice||'?-?-?',tong:prediction.total||0,ket_qua:'',du_doan:prediction.prediction,danh_gia:'',do_tin_cay:prediction.confidence+'%',timestamp:new Date().toISOString(),reason:prediction.reason,method:prediction.method,details:prediction.details||[]};
         this.predictionLog.push(e);if(this.predictionLog.length>10000)this.predictionLog=this.predictionLog.slice(-10000);return e;
     }
