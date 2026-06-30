@@ -156,7 +156,7 @@ class PredictionEngine{
         else return null;
         const sid=sessionData.sessionId||sessionData.id||0,total=sessionData.total||0,dice=sessionData.dice||'?-?-?';
         if(this.lastPrediction){
-            const correct=this.lastPrediction===actual;
+            const lp=this.lastPrediction==="Tài"?"T":this.lastPrediction==="Xỉu"?"X":this.lastPrediction;const correct=lp===actual;
             if(correct)this.stats.correct++;else this.stats.wrong++;
             const lastLog=this.predictionLog[this.predictionLog.length-1];
             if(lastLog&&!lastLog.danh_gia){
