@@ -1,219 +1,262 @@
+// xocdia88.js — Port 1:1 từ FloatingServiceXocDia88.smali (47 patterns + NN sigmoid + 4 nhánh predict)
 const WebSocket=require('ws'),fs=require('fs'),path=require('path'),http=require('http');
-const WS_URL=process.env.WS_URL||'wss://taixiumd5.system32-cloudfare-356783752985678522.monster/signalr/connect?transport=webSockets&connectionToken=z0%2Bp4sHHXusB7hFR4ZBSkc7TBejGa%2BoooswT8oNe8KhHmsJEIWLTtZh40jp%2FuaCUuwj1vJOAqw%2Fc1EBSv7ebeZGlhgS2FeQ1GNBYU%2F5AVausPA4HmHluu0RJW1Pwcy9H&connectionData=%5B%7B%22name%22%3A%22md5luckydiceHub%22%7D%5D&tid=1';
-const HUB_NAME='md5luckydiceHub',DATA_DIR=path.join(__dirname,'data'),API_PORT=parseInt(process.env.PORT||'8888'),SAVE_MS=300000,MAX_H=100000,MIN_S=6;
-function ensureDir(){try{if(!fs.existsSync(DATA_DIR))fs.mkdirSync(DATA_DIR,{recursive:true})}catch(e){}}
-function log(l,m){console.log('['+new Date().toISOString()+'] ['+l+'] '+m)}
-function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
+const WS_URL=process.env.WS_URL||process.argv[2]||'wss://taixiumd5.system32-cloudfare-356783752985678522.monster/signalr/connect?transport=webSockets&connectionToken=z0%2Bp4sHHXusB7hFR4ZBSkc7TBejGa%2BoooswT8oNe8KhHmsJEIWLTtZh40jp%2FuaCUuwj1vJOAqw%2Fc1EBSv7ebeZGlhgS2FeQ1GNBYU%2F5AVausPA4HmHluu0RJW1Pwcy9H&connectionData=%5B%7B%22name%22%3A%22md5luckydiceHub%22%7D%5D&tid=1';
+const HUB='md5luckydiceHub',DIR=path.join(__dirname,'data'),PORT=parseInt(process.env.PORT||'8888');
+function d(){if(!fs.existsSync(DIR))fs.mkdirSync(DIR,{recursive:true})}
+function log(l,m){const t='['+new Date().toISOString()+']['+l+']'+m;console.log(t);try{fs.appendFileSync(path.join(DIR,'log.txt'),t+'\n')}catch(_){}}
+function clamp(v,lo,hi){return v<lo?lo:v>hi?hi:v}
 function sigmoid(x){return 1/(1+Math.exp(-x))}
-function timeStr(ms){const e=Math.floor((Date.now()-ms)/1000);if(e<0)return'0d 0h 0m';return Math.floor(e/86400)+'d '+Math.floor((e%86400)/3600)+'h '+Math.floor((e%3600)/60)+'m'}
 
-class PredictionEngine{
-    constructor(){
-        this._startTime=Date.now();this.history=[];this.sessions=[];this.predictionLog=[];
-        this.lastPrediction=null;this.lastSessionId=0;this.lastConfidence=50;
-        this.weights=[0.35,0.35,0.3];this.nnBias=0.5;this.patternWeights={};this.patternFailCount={};this.patternSuccessCount={};
-        this.stats={totalSessions:0,totalTai:0,totalXiu:0,correctPredictions:0,wrongPredictions:0,longestTaiStreak:0,longestXiuStreak:0,currentStreakType:'',currentStreakCount:0,startTime:this._startTime,adaptiveCorrections:0};
-        this.loadHistory();this.loadPredictionLog();this.loadPatternWeights();this.calibrateFromHistory();
-    }
-    
-    loadHistory(){
-        try{
-            const hf=DATA_DIR+'/history.json';
-            if(fs.existsSync(hf)){
-                const d=JSON.parse(fs.readFileSync(hf,'utf8'));
-                this.history=Array.isArray(d.history)?d.history:[];
-                this.sessions=Array.isArray(d.sessions)?d.sessions:[];
-                if(d.stats){const s=d.stats;if(typeof s.totalSessions==='number')this.stats.totalSessions=s.totalSessions;if(typeof s.totalTai==='number')this.stats.totalTai=s.totalTai;if(typeof s.totalXiu==='number')this.stats.totalXiu=s.totalXiu;if(typeof s.correctPredictions==='number')this.stats.correctPredictions=s.correctPredictions;if(typeof s.wrongPredictions==='number')this.stats.wrongPredictions=s.wrongPredictions;if(typeof s.longestTaiStreak==='number')this.stats.longestTaiStreak=s.longestTaiStreak;if(typeof s.longestXiuStreak==='number')this.stats.longestXiuStreak=s.longestXiuStreak;if(s.currentStreakType)this.stats.currentStreakType=s.currentStreakType;if(typeof s.currentStreakCount==='number')this.stats.currentStreakCount=s.currentStreakCount;if(typeof s.startTime==='number'&&s.startTime>1700000000000){this._startTime=s.startTime;this.stats.startTime=this._startTime}}
-                if(this.history.length>0){const lr=this.history[this.history.length-1];this.stats.currentStreakType=lr;this.stats.currentStreakCount=0;for(let i=this.history.length-1;i>=0;i--){if(this.history[i]===lr)this.stats.currentStreakCount++;else break}}
-            }
-        }catch(e){this._startTime=Date.now()}
-    }
-    
-    loadPredictionLog(){
-        try{const pf=DATA_DIR+'/prediction_log.json';if(fs.existsSync(pf)){this.predictionLog=JSON.parse(fs.readFileSync(pf,'utf8')).predictionLog||[]}}catch(e){this.predictionLog=[]}
-    }
-    
-    loadPatternWeights(){
-        try{const pwf=DATA_DIR+'/pw.json';if(fs.existsSync(pwf)){const d=JSON.parse(fs.readFileSync(pwf,'utf8'));this.patternWeights=d.pw||{};this.patternFailCount=d.pf||{};this.patternSuccessCount=d.ps||{}}}catch(e){}
-    }
-    
-    saveHistory(){try{fs.writeFileSync(DATA_DIR+'/history.json',JSON.stringify({history:this.history.slice(-5000),sessions:this.sessions.slice(-5000),stats:this.stats},null,2))}catch(e){}}
-    savePredictionLog(){try{fs.writeFileSync(DATA_DIR+'/prediction_log.json',JSON.stringify({predictionLog:this.predictionLog.slice(-10000)},null,2))}catch(e){}}
-    savePatternWeights(){try{fs.writeFileSync(DATA_DIR+'/pw.json',JSON.stringify({pw:this.patternWeights,pf:this.patternFailCount,ps:this.patternSuccessCount},null,2))}catch(e){}}
-    
-    calibrateFromHistory(){
-        for(const log of this.predictionLog){
-            if((log.danh_gia==='✅ ĐÚNG'||log.danh_gia==='❌ SAI')&&log.patterns&&log.patterns.length>0){
-                const mp=log.patterns[0];if(!this.patternSuccessCount[mp])this.patternSuccessCount[mp]=0;if(!this.patternFailCount[mp])this.patternFailCount[mp]=0;
-                if(log.danh_gia==='✅ ĐÚNG')this.patternSuccessCount[mp]++;else this.patternFailCount[mp]++;
-            }
-        }
-        for(const name in this.patternSuccessCount){const s=this.patternSuccessCount[name]||0,f=this.patternFailCount[name]||0;if(s+f>=3)this.patternWeights[name]=clamp(s/(s+f),0.3,1.5)}
-    }
-    
-    normalizeResult(input){if(!input)return null;const n=String(input).toLowerCase().trim();if(n==='tài'||n==='tai'||n==='t'||n==='1')return'T';if(n==='xỉu'||n==='xiu'||n==='x'||n==='0')return'X';if(n.includes('tài')||n.includes('tai'))return'T';if(n.includes('xỉu')||n.includes('xiu'))return'X';return null}
-    
-    getLastElements(count){if(count<=0)return[];return this.history.slice(-Math.min(count,this.history.length))}
-    getElementFromEnd(pos){if(pos<=0||pos>this.history.length)return null;return this.history[this.history.length-pos]}
-    countOccurrences(arr,val){let c=0;for(let i=0;i<arr.length;i++)if(arr[i]===val)c++;return c}
-    getStreak(count){const arr=this.getLastElements(count);if(arr.length===0)return{t:0,x:0};let t=0,x=0;for(let i=arr.length-1;i>=0;i--){if(arr[i]==='T')t++;else break;}for(let i=arr.length-1;i>=0;i--){if(arr[i]==='X')x++;else break;}return{t,x}}
-    
-    analyzeAllPatterns(){
-        const res=[],h=this.getLastElements(80);if(h.length<3)return res;
-        const add=(name,pred,score)=>{const pw=this.patternWeights[name]||1.0;const s=clamp(score*pw,0.1,0.95);res.push({name,pred,score:s,originalScore:score})};
-        const lst=(n)=>this.getElementFromEnd(n);const cnt=(a,v)=>this.countOccurrences(a,v);const sl=(n)=>this.getLastElements(n);
-        
-        if(h.length>=2&&lst(1)===lst(2))add('Bệt ngắn',lst(1),0.68);
-        {const l6=sl(6);const t6=cnt(l6,'T');if(t6>=6)add('Bệt dài','T',0.85);if(t6<=0)add('Bệt dài','X',0.85)}
-        if(h.length>=3&&lst(1)===lst(3)&&lst(1)!==lst(2))add('Đảo 1-1 ngắn',lst(1)==='T'?'X':'T',0.72);
-        {const l5=sl(5);let alt=true;for(let i=1;i<5;i++)if(l5[i]===l5[i-1]){alt=false;break}if(alt)add('Đảo 1-1 dài',l5[4]==='T'?'X':'T',0.75)}
-        {const sz=h.length%3;if(sz===0||sz===2){const l3=sl(3);const t3=cnt(l3,'T');add('Cầu 1-2',t3>=2?'T':'X',0.62)}}
-        {const sz=h.length%3;if(sz===1){const l3=sl(3);const t3=cnt(l3,'T');add('Cầu 2-1',t3>=2?'X':'T',0.62)}}
-        {const l4=sl(4);if(l4[0]===l4[1]&&l4[2]===l4[3]&&l4[0]!==l4[2])add('Kép 2-2',l4[3]==='T'?'X':'T',0.75)}
-        {const l4=sl(4);const t4=cnt(l4,'T');if(t4>=3&&l4[3]!==l4[2])add('Cầu 3-1',l4[2],0.69);if(t4<=1&&l4[3]!==l4[2])add('Cầu 3-1',l4[2],0.69)}
-        {const l10=sl(10);const t10=cnt(l10,'T');if(t10>(10-t10))add('Imbalance','T',0.68);else if((10-t10)>t10)add('Imbalance','X',0.68)}
-        add('Ngẫu nhiên',Math.random()<0.5?'T':'X',0.40);
-        {const l10=sl(10);const t10=cnt(l10,'T');if(t10>=10)add('Siêu bệt T','T',0.95);if(t10<=0)add('Siêu bệt X','X',0.95)}
-        {const l5=sl(5);if(l5.every(x=>x==='T'))add('Bệt T5','T',0.80);if(l5.every(x=>x==='X'))add('Bệt X5','X',0.80)}
-        {const l4=sl(4);if(l4[0]===l4[2]&&l4[1]===l4[3]&&l4[0]!==l4[1])add('Chu kỳ 2',l4[3]==='T'?'X':'T',0.68)}
-        {const l6=sl(6);if(l6[0]===l6[3]&&l6[1]===l6[4]&&l6[2]===l6[5]&&l6[0]!==l6[1])add('Chu kỳ 3',l6[5]==='T'?'X':'T',0.65)}
-        {const l6=sl(6);if(l6[0]===l6[1]&&l6[1]===l6[2]&&l6[3]===l6[4]&&l6[4]===l6[5]&&l6[0]!==l6[3])add('3-3',l6[5]==='T'?'X':'T',0.78)}
-        {const l5=sl(5);const rev=[...l5].reverse();if(l5.join('')===rev.join(''))add('Đối xứng',l5[0]==='T'?'X':'T',0.78)}
-        {const l5=sl(5);const rev=[...l5].reverse();let m=0;for(let i=0;i<5;i++)if(l5[i]===rev[i])m++;if(m>=4)add('Bán đối xứng',l5[2]==='T'?'X':'T',0.62)}
-        {const l7=sl(7);const t7=cnt(l7,'T');if(t7>=5)add('Nghiêng T7','T',0.66);if(t7<=2)add('Nghiêng X7','X',0.66)}
-        {const l5=sl(5);const t5=cnt(l5,'T');if(t5>=3)add('Lặp 3-2→X','X',0.60);if(t5<=2)add('Lặp 2-3→T','T',0.60)}
-        {const l7=sl(7);let alt=true;for(let i=1;i<7;i++){if(l7[i]===l7[i-1]){alt=false;break}}if(alt)add('Xen kẽ 7',l7[6]==='T'?'X':'T',0.72)}
-        {const l6=sl(6);let sw=0;for(let i=1;i<6;i++)if(l6[i]!==l6[i-1])sw++;if(sw<=2)add('Ít đổi',l6[5],0.60)}
-        {const st=this.getStreak(6);if(st.t>=5)add('CẤM BẺ TÀI','T',0.90);if(st.x>=5)add('CẤM BẺ XỈU','X',0.90)}
-        {const l5=sl(5);const t5=cnt(l5,'T');if(t5>=4)add('Theo T5','T',0.82);if(t5<=1)add('Theo X5','X',0.82)}
-        {const l4=sl(4);const t4=cnt(l4,'T');if(t4>=3&&l4[3]==='T')add('Theo T3/4','T',0.70);if(t4<=1&&l4[3]==='X')add('Theo X3/4','X',0.70)}
-        
-        res.sort((a,b)=>b.score-a.score);
-        return res;
-    }
-    
-    predict(sessionData={}){
-    // LUÔN ĐOÁN SAI: Chọn kết quả ít khả năng nhất
-    if (this.history.length >= 2) {
-        const last = this.history.get(-1);
-        const prev = this.history.get(-2);
-        // Nếu đang xen kẽ -> đoán theo (sai vì sẽ gãy)
-        // Nếu đang bệt -> đoán đảo (sai vì sẽ bệt tiếp)
-        const fool = last === prev ? (last === "T" ? "X" : "T") : last;
-        this.lastPrediction = fool;
-        return { prediction: fool === "T" ? "Tài" : "Xỉu", predictionRaw: fool, confidence: 96, method: "always_wrong", reason: "Đoán sai có chủ đích" };
-    }
-    const r = Math.random() < 0.5 ? "T" : "X";
-    this.lastPrediction = r;
-    return { prediction: r === "T" ? "Tài" : "Xỉu", predictionRaw: r, confidence: 96, method: "always_wrong", reason: "Đoán sai" };
-    }
-    
-    addResult(resultInput,sessionData={}){
-        const n=this.normalizeResult(resultInput);if(!n)return null;
-        const actual=n,sid=sessionData.id||0;
-        if(this.lastPrediction){
-            const correct=this.lastPrediction===actual;
-            if(correct)this.stats.correctPredictions++;else this.stats.wrongPredictions++;
-            const lastLog=this.predictionLog[this.predictionLog.length-1];
-            if(lastLog&&(!lastLog.danh_gia||lastLog.danh_gia==='')){
-                lastLog.ket_qua=actual==='T'?'Tài':'Xỉu';
-                lastLog.danh_gia=correct?'✅ ĐÚNG':'❌ SAI';
-            }
-            if(lastLog&&lastLog.patterns&&lastLog.patterns.length>0){
-                const mp=lastLog.patterns[0];if(!this.patternSuccessCount[mp])this.patternSuccessCount[mp]=0;if(!this.patternFailCount[mp])this.patternFailCount[mp]=0;
-                if(correct)this.patternSuccessCount[mp]++;else this.patternFailCount[mp]++;
-                const s=this.patternSuccessCount[mp]||0,f=this.patternFailCount[mp]||0;if(s+f>=3)this.patternWeights[mp]=clamp(s/(s+f),0.3,1.5);
-            }
-        }
-        if(this.stats.currentStreakType===actual)this.stats.currentStreakCount++;else{this.stats.currentStreakType=actual;this.stats.currentStreakCount=1;}
-        if(actual==='T'){this.stats.totalTai++;if(this.stats.currentStreakCount>this.stats.longestTaiStreak)this.stats.longestTaiStreak=this.stats.currentStreakCount}
-        else{this.stats.totalXiu++;if(this.stats.currentStreakCount>this.stats.longestXiuStreak)this.stats.longestXiuStreak=this.stats.currentStreakCount}
-        this.stats.totalSessions++;this.history.push(actual);
-        this.sessions.push({id:sid,result:actual,time:new Date().toISOString(),dice:sessionData.dice||null,total:sessionData.total||null,betTai:sessionData.betTai||0,betXiu:sessionData.betXiu||0});
-        if(this.history.length>MAX_H)this.history=this.history.slice(-MAX_H);
-        this.savePredictionLog();return actual;
-    }
-    
-    logPrediction(sid,prediction){
-    const exists=this.predictionLog.find(p=>p.phien===String(parseInt(sid)+1)&&p.danh_gia==="");
-    if(exists)return exists;
-        const e={phien:String(parseInt(sid)+1),xuc_xac:prediction.dice||'?-?-?',tong:prediction.total||0,ket_qua:'',du_doan:prediction.prediction,danh_gia:'',do_tin_cay:prediction.confidence+'%',timestamp:new Date().toISOString(),reason:prediction.reason,method:prediction.method,details:prediction.details||[]};
-        this.predictionLog.push(e);if(this.predictionLog.length>10000)this.predictionLog=this.predictionLog.slice(-10000);return e;
-    }
-    
-    getPredictionLog(limit=50){return this.predictionLog.slice(-limit).reverse()}
-    getAccuracy(){const t=this.stats.correctPredictions+this.stats.wrongPredictions;return t===0?0:Math.round(this.stats.correctPredictions/t*100)}
-    getRuntime(){return timeStr(this._startTime)}
+// Port từ Lx/he; (Neural Network 3 input)
+class He {
+    constructor(){this.b=[0.35,0.35,0.3];this.c=0.5}
+    predict(p){let s=0;for(let i=0;i<3;i++)s+=this.b[i]*p[i];return clamp(sigmoid(s),0.4,0.6)}
 }
 
-const engine=new PredictionEngine();
-let websocket=null,reconnectTimer=null,pingTimer=null,reconnectAttempts=0;
-const MAX_RECONNECT_DELAY=30000;
+// Port từ Lx/fh; (Lịch sử phiên)
+class Fh {constructor(r){this.a=r}}
 
-function connectWebSocket(){
-    if(!WS_URL){console.log('ERROR: WS_URL not set');setTimeout(connectWebSocket,10000);return}
-    if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null}
-    if(pingTimer){clearInterval(pingTimer);pingTimer=null}
-    if(websocket){try{websocket.close()}catch(e){}websocket=null}
-    try{websocket=new WebSocket(WS_URL)}catch(e){setTimeout(connectWebSocket,10000);return}
-    reconnectAttempts++;const backoff=Math.min(1000*Math.pow(1.5,reconnectAttempts-1),MAX_RECONNECT_DELAY);
-    
-    websocket.on('open',function(){
-        reconnectAttempts=0;log('WS','Connected');
-        try{websocket.send(JSON.stringify({H:HUB_NAME,M:'Ping',A:[],I:0}))}catch(e){}
-        pingTimer=setInterval(function(){if(websocket&&websocket.readyState===1){try{websocket.send(JSON.stringify({H:HUB_NAME,M:'Ping',A:[],I:Date.now()}))}catch(e){}}},60000);
-    });
-    
-    websocket.on('message',function(data){
+class XocDiaEngine {
+    constructor(){
+        this._startTime=Date.now();this.history=[];this.sessions=[];this.logs=[];
+        this.he=new He();this.lastPred=null;this.lastSid=0;
+        this.patternWeights={};this.patternFail={};this.patternSuccess={};
+        this.stats={total:0,tai:0,xiu:0,correct:0,wrong:0,curType:'',curStreak:0};
+        this.MIN_S=6;
+        this._initPatterns();this._load();
+    }
+
+    // 47 PATTERNS (port từ constructor)
+    _initPatterns(){
+        const sl=(n)=>this.history.slice(-n);
+        const lst=(n)=>this.history[this.history.length-n];
+        const cnt=(a,v)=>a.filter(x=>x===v).length;
+        const self=this;
+
+        this.patterns=[
+            {name:'Bệt',check:()=>{const h=sl(6);if(h.length<6)return null;const t=cnt(h,'T');if(t>=6)return true;if(t===0)return false;return null}},
+            {name:'Bệt siêu dài',check:()=>{const h=sl(10);if(h.length<10)return null;const t=cnt(h,'T');if(t>=10)return true;if(t===0)return false;return null}},
+            {name:'Bệt xen kẽ ngắn',check:()=>{const h=sl(6);if(h.length<6)return null;const l=h[h.length-1];let s=0;for(let i=h.length-1;i>=0;i--){if(h[i]===l)s++;else break}return s>=3?l==='T':null}},
+            {name:'Bệt gãy nhẹ',check:()=>{const h=sl(6);if(h.length<6)return null;let b=0;for(let i=1;i<h.length;i++)if(h[i]!==h[i-1])b++;return b<=1?h[h.length-1]==='T':null}},
+            {name:'Đảo 1-1',check:()=>{if(self.history.length<4)return null;return lst(1)===lst(3)&&lst(1)!==lst(2)?lst(1)==='T':null}},
+            {name:'Kép 2-2',check:()=>{const h=sl(4);if(h.length<4)return null;if(h[0]===h[1]&&h[2]===h[3]&&h[0]!==h[2])return h[3]==='T';return null}},
+            {name:'3-3',check:()=>{const h=sl(3);if(h.length<3)return null;if(h[0]===h[1]&&h[1]===h[2])return h[2]==='T';return null}},
+            {name:'Chu kỳ 2',check:()=>{const h=sl(4);if(h.length<4)return null;if(h[0]===h[2]&&h[1]===h[3]&&h[0]!==h[1])return h[3]!=='T';return null}},
+            {name:'Chu kỳ 3',check:()=>{const h=sl(6);if(h.length<6)return null;if(h[0]===h[3]&&h[1]===h[4]&&h[2]===h[5]&&h[0]!==h[1])return h[5]!=='T';return null}},
+            {name:'Lặp 2-1',check:()=>{const h=sl(2);return h.length>=2?h[0]==='T':null}},
+            {name:'Lặp 3-2',check:()=>{const h=sl(2);return h.length>=2?h[0]==='T':null}},
+            {name:'Đối xứng',check:()=>{const h=sl(5);if(h.length<5)return null;const rev=[...h].reverse();if(h.join('')===rev.join(''))return h[0]!=='T';return null}},
+            {name:'Bán đối xứng',check:()=>{const h=sl(5);if(h.length<5)return null;const rev=[...h].reverse();let m=0;for(let i=0;i<5;i++)if(h[i]===rev[i])m++;return m>=4?h[2]!=='T':null}},
+            {name:'Bệt ngược',check:()=>{const h=sl(5);if(h.length<5)return null;const l=h[h.length-1];let s=0;for(let i=h.length-1;i>=0;i--){if(h[i]===l)s++;else break}return s>=5?l!=='T':null}},
+            {name:'Xỉu kép',check:()=>{const h=sl(2);return h.length>=2&&h[0]==='X'&&h[1]==='X'?false:null}},
+            {name:'Tài kép',check:()=>{const h=sl(2);return h.length>=2&&h[0]==='T'&&h[1]==='T'?true:null}},
+            {name:'Xen kẽ',check:()=>{const h=sl(5);if(h.length<5)return null;let a=true;for(let i=1;i<h.length;i++)if(h[i]===h[i-1]){a=false;break}return a?h[h.length-1]!=='T':null}},
+            {name:'Gập ghềnh',check:()=>{const h=sl(6);if(h.length<6)return null;let sw=0;for(let i=1;i<h.length;i++)if(h[i]!==h[i-1])sw++;return sw>=3?h[h.length-1]!=='T':null}},
+            {name:'Bậc thang',check:()=>{const h=sl(5);if(h.length<5)return null;let inc=true;for(let i=1;i<h.length;i++)if(h[i]===h[i-1]){inc=false;break}return inc?h[h.length-1]!=='T':null}},
+            {name:'Gãy ngang',check:()=>{const h=sl(6);if(h.length<6)return null;const l=h[h.length-1];let s=0;for(let i=h.length-1;i>=0;i--){if(h[i]===l)s++;else break}return s>=3?l!=='T':null}},
+            {name:'Cầu đôi',check:()=>{const h=sl(4);if(h.length<4)return null;if(h[0]===h[1]&&h[2]===h[3])return h[3]!=='T';return null}},
+            {name:'Ngẫu nhiên',check:()=>null},
+            {name:'Đa dạng',check:()=>{const h=sl(10);if(h.length<10)return null;return new Set(h).size>=4?h[h.length-1]!=='T':null}},
+            {name:'Chu kỳ tăng',check:()=>{const h=sl(6);if(h.length<6)return null;let s=[],c=1;for(let i=h.length-2;i>=0;i--){if(h[i]===h[i+1])c++;else{s.push(c);c=1}}s.push(c);for(let j=1;j<s.length;j++)if(s[j]<=s[j-1])return null;return h[h.length-1]!=='T'}},
+            {name:'Chu kỳ giảm',check:()=>{const h=sl(6);if(h.length<6)return null;let s=[],c=1;for(let i=h.length-2;i>=0;i--){if(h[i]===h[i+1])c++;else{s.push(c);c=1}}s.push(c);for(let j=1;j<s.length;j++)if(s[j]>=s[j-1])return null;return h[h.length-1]!=='T'}},
+            {name:'Cầu lặp',check:()=>{const h=sl(6);return h.length>=6?h[0]==='T':null}},
+            {name:'Đối ngược',check:()=>{const h=sl(4);if(h.length<4)return null;return h[0]!==h[1]&&h[1]===h[2]&&h[2]!==h[3]?h[3]!=='T':null}},
+            {name:'Phân cụm',check:()=>{const h=sl(10);if(h.length<10)return null;return cnt(h,'T')>5?true:null}},
+            {name:'Lệch ngẫu nhiên',check:()=>{const h=sl(10);if(h.length<10)return null;const t=cnt(h,'T');return t>=5?false:true}},
+            {name:'Xen kẽ dài',check:()=>{const h=sl(8);if(h.length<8)return null;let a=true;for(let i=1;i<8;i++)if(h[i]===h[i-1]){a=false;break}return a?h[7]!=='T':null}},
+            {name:'Cầu gập',check:()=>{const h=sl(6);if(h.length<6)return null;const l=h[h.length-1];let s=0;for(let i=h.length-1;i>=0;i--){if(h[i]===l)s++;else break}return s>=4?l!=='T':null}},
+            {name:'Xỉu lắc',check:()=>{const h=sl(5);if(h.length<5)return null;return h[h.length-1]==='X'&&h[h.length-2]==='T'?false:null}},
+            {name:'Tài lắc',check:()=>{const h=sl(5);if(h.length<5)return null;return h[h.length-1]==='T'&&h[h.length-2]==='X'?true:null}},
+            {name:'Phối hợp 1',check:()=>{const h=sl(10);if(h.length<10)return null;return cnt(h,'T')>5?true:null}},
+            {name:'Phối hợp 2',check:()=>{const q=self.getQuickAnalysis();return q?q.isTai:null}},
+            {name:'Phối hợp 3',check:()=>{const q=self.getQuickAnalysis();return q?q.isTai:null}},
+            {name:'Chẵn lẻ lặp',check:()=>{const h=sl(4);if(h.length<4)return null;if(h[0]===h[2]&&h[1]===h[3])return h[3]!=='T';return null}},
+            {name:'Dài ngắn đảo',check:()=>{const h=sl(6);if(h.length<6)return null;return h[h.length-1]!=='T'}},
+            {name:'Ngẫu nhiên bệt',check:()=>{const h=sl(5);if(h.length<5)return null;const l=h[h.length-1];let s=0;for(let i=h.length-1;i>=0;i--){if(h[i]===l)s++;else break}return s>=4?l==='T':null}},
+            {name:'Cầu dài ngẫu',check:()=>{const h=sl(10);if(h.length<10)return null;const t=cnt(h,'T');return t>=6?false:null}},
+            {name:'Ngược chu kỳ',check:()=>{const h=sl(6);if(h.length<6)return null;if(h[0]===h[3]&&h[1]===h[4]&&h[2]===h[5])return h[5]!=='T';return null}},
+            {name:'Chu kỳ biến đổi',check:()=>{const h=sl(8);if(h.length<8)return null;return h[h.length-1]!=='T'}},
+            {name:'Cầu linh hoạt',check:()=>{const h=sl(6);if(h.length<6)return null;const t=cnt(h,'T');return t>=3?false:null}},
+            {name:'Cầu 3-1',check:()=>{const h=sl(4);if(h.length<4)return null;if(h[0]===h[1]&&h[1]===h[2]&&h[2]!==h[3])return h[3]!=='T';return null}},
+            {name:'Cầu 2-1-2',check:()=>{const h=sl(5);if(h.length<5)return null;if(h[0]===h[1]&&h[1]!==h[2]&&h[2]===h[3]&&h[3]===h[4])return h[4]!=='T';return null}},
+            {name:'Cầu thời gian nhanh',check:()=>{return lst(1)?lst(1)!=='T':null}},
+            {name:'Cầu thời gian chậm',check:()=>{return lst(1)?lst(1)!=='T':null}},
+        ];
+    }
+
+    // Port từ method g (getQuickAnalysis)
+    getQuickAnalysis(){
+        const arr=this.history.slice(-20);
+        if(arr.length===0)return{isTai:true,score:0.5};
+        const tc=arr.filter(x=>x==='T').length;
+        const ratio=(tc+1)/(arr.length+2);
+        const score=clamp(Math.abs(ratio-0.5)*1.5,0.3,0.88);
+        return{isTai:tc>=(arr.length-tc),score};
+    }
+
+    // Port từ method n (_calcProb)
+    _calcProb(isTai,score){
+        const c=clamp(score,0.1,0.95)*0.5;
+        return isTai?c+0.5:0.5-c;
+    }
+
+    // Port từ method j (analyzePatternsFull)
+    analyzePatterns(){
+        const results=[];
+        const h80=this.history.slice(-80);
+        if(h80.length<8)return results;
+        for(const p of this.patterns){
+            const isTai=p.check();
+            if(isTai===null)continue;
+            const total=(this.patternSuccess[p.name]||0)+(this.patternFail[p.name]||0);
+            const sr=total>0?(this.patternSuccess[p.name]||0)/total:0.5;
+            const score=clamp(sr*0.7+0.3,0.25,0.98);
+            results.push({name:p.name,score,isTai});
+        }
+        results.sort((a,b)=>b.score-a.score);
+        return results;
+    }
+
+    // Port từ method c (predict) - 4 nhánh
+    predict(){
+        // Nhánh 1: Warmup (<6)
+        if(this.history.length<this.MIN_S){
+            const last=this.history.length>0?this.history[this.history.length-1]:'T';
+            const rand=Math.random();
+            const pred=last==='T'?(rand<0.52?'T':'X'):(rand<0.48?'X':'T');
+            this.lastPred=pred;
+            return{prediction:pred==='T'?'Tài':'Xỉu',confidence:50,method:'warmup',reason:'Khởi động '+this.history.length+'/'+this.MIN_S};
+        }
+
+        const patterns=this.analyzePatterns();
+
+        // Nhánh 2: Strong (>0.72)
+        if(patterns.length>0&&patterns[0].score>0.72){
+            const bp=patterns[0];
+            const pred=bp.isTai?'T':'X';
+            this.lastPred=pred;
+            const conf=Math.round(clamp(bp.score,0.4,0.6)*100);
+            return{prediction:pred==='T'?'Tài':'Xỉu',confidence:conf,method:'strong',reason:bp.name};
+        }
+
+        // Nhánh 3: Medium (>0.55)
+        if(patterns.length>0&&patterns[0].score>0.55){
+            const bp=patterns[0];
+            const q=this.getQuickAnalysis();
+            const combined=bp.score*0.6+(bp.isTai?q.score:1-q.score)*0.4;
+            const pred=combined>=0.5?'T':'X';
+            this.lastPred=pred;
+            const conf=Math.round(clamp(clamp(combined,0.4,0.6),0.4,0.6)*100);
+            return{prediction:pred==='T'?'Tài':'Xỉu',confidence:conf,method:'medium',reason:bp.name+' (medium)'};
+        }
+
+        // Nhánh 4: Fallback NN
+        const sc=this.stats.curStreak/10;
+        const tr=this.stats.total>0?this.stats.tai/this.stats.total:0.5;
+        const nnScore=this.he.predict([sc,tr,0.5]);
+        const pred=nnScore>=0.5?'T':'X';
+        this.lastPred=pred;
+        return{prediction:pred==='T'?'Tài':'Xỉu',confidence:Math.round(nnScore*100),method:'nn',reason:'Neural Network'};
+    }
+
+    addResult(r,data={}){
+        const n=String(r).toLowerCase().trim();let a=null;
+        if(n==='tài'||n==='tai'||n==='t'||n==='1')a='T';
+        else if(n==='xỉu'||n==='xiu'||n==='x'||n==='0')a='X';
+        else if(n.includes('tài')||n.includes('tai'))a='T';
+        else if(n.includes('xỉu')||n.includes('xiu'))a='X';
+        else return null;
+
+        const sid=data.sessionId||data.id||0,total=data.total||0,dice=data.dice||'?-?-?';
+
+        if(this.lastPred){
+            const lp=this.lastPred==='Tài'?'T':this.lastPred==='Xỉu'?'X':this.lastPred;
+            const ok=lp===a;
+            if(ok)this.stats.correct++;else this.stats.wrong++;
+
+            const lastLog=this.logs[this.logs.length-1];
+            if(lastLog&&!lastLog.ket_qua){
+                lastLog.xuc_xac=dice;lastLog.tong=total;
+                lastLog.ket_qua=a==='T'?'Tài':'Xỉu';
+                lastLog.danh_gia=ok?'✅ ĐÚNG':'❌ SAI';
+            }
+        }
+
+        if(this.stats.curType===a)this.stats.curStreak++;else{this.stats.curType=a;this.stats.curStreak=1}
+        if(a==='T')this.stats.tai++;else this.stats.xiu++;
+        this.stats.total++;this.history.push(a);
+        this.sessions.push({ts:Date.now(),sid,result:a,total,dice});
+        if(this.stats.total%100===0)this._save();
+        return a;
+    }
+
+    logPrediction(sid,p){
+        const e={
+            phien:String(sid),xuc_xac:'?-?-?',tong:0,ket_qua:'',
+            du_doan:p.prediction,danh_gia:'',do_tin_cay:p.confidence+'%',
+            timestamp:new Date().toISOString(),reason:p.reason,method:p.method
+        };
+        this.logs.push(e);if(this.logs.length>10000)this.logs.shift();return e;
+    }
+
+    _save(){try{fs.writeFileSync(path.join(DIR,'state.json'),JSON.stringify({history:this.history.slice(-2000),sessions:this.sessions.slice(-2000),logs:this.logs.slice(-5000),stats:this.stats,patternSuccess:this.patternSuccess,patternFail:this.patternFail,patternWeights:this.patternWeights}))}catch(_){}}
+    _load(){try{const f=path.join(DIR,'state.json');if(fs.existsSync(f)){const d=JSON.parse(fs.readFileSync(f,'utf8'));if(d.history)this.history=d.history;if(d.sessions)this.sessions=d.sessions;if(d.stats)this.stats=d.stats;if(d.logs)this.logs=d.logs;if(d.patternSuccess)this.patternSuccess=d.patternSuccess;if(d.patternFail)this.patternFail=d.patternFail;if(d.patternWeights)this.patternWeights=d.patternWeights}}catch(_){}}
+    getAccuracy(){const t=this.stats.correct+this.stats.wrong;return t===0?0:Math.round(this.stats.correct/t*100)}
+    getLogs(n=50){return this.logs.slice(-n).reverse()}
+}
+
+const engine=new XocDiaEngine();
+
+function connect(){
+    if(!WS_URL){log('ERROR','No WS_URL');return}
+    const ws=new WebSocket(WS_URL);
+    ws.on('open',()=>{log('WS','Connected');ws.send(JSON.stringify({H:HUB,M:'Register',A:[],I:0}));setInterval(()=>{if(ws.readyState===1)ws.send(JSON.stringify({H:HUB,M:'Ping',A:[],I:Date.now()}))},60000)});
+    ws.on('message',raw=>{
         try{
-            const json=JSON.parse(data.toString());if(!json.M)return;
-            json.M.forEach(function(m){
+            const msg=JSON.parse(raw.toString());if(!msg.M)return;
+            for(const m of msg.M){
                 if(m.M==='Md5sessionInfo'){
-                    const info=m.A[0];
-                    if(info.CurrentState===0&&info.Ellapsed>0){process.stdout.write('\r⏳ '+info.Ellapsed+'s | ⚡'+engine.getRuntime()+' | 📊'+engine.stats.totalSessions+' | 🎯'+engine.getAccuracy()+'%   ')}
-                    if(info.CurrentState===1&&info.Result&&info.Result.Dice1>0){
-                        engine.lastSessionId=info.SessionID;
-                        const d1=info.Result.Dice1,d2=info.Result.Dice2,d3=info.Result.Dice3,total=d1+d2+d3,result=total>=11?'T':'X';
-                        engine.addResult(result,{id:info.SessionID,dice:[d1,d2,d3],total,betTai:info.TotalBetTai,betXiu:info.TotalBetXiu});
-                        const prediction=engine.predict();
-                        engine.logPrediction(info.SessionID,{prediction:prediction.prediction,confidence:prediction.confidence,reason:prediction.reason,method:prediction.method,total:total,dice:d1+'-'+d2+'-'+d3,details:[]});
+                    const s=m.A[0];
+                    if(s.CurrentState===0&&s.Ellapsed>0)process.stdout.write('\r⏳'+s.Ellapsed+'s | 🎯'+engine.getAccuracy()+'% | 📊'+engine.stats.total+'   ');
+                    if(s.CurrentState===1&&s.Result&&s.Result.Dice1>0&&engine.lastSid!==s.SessionID){
+                        engine.lastSid=s.SessionID;
+                        const d1=s.Result.Dice1,d2=s.Result.Dice2,d3=s.Result.Dice3;
+                        const total=d1+d2+d3,result=total>=11?'Tài':'Xỉu';
+                        engine.addResult(result,{sessionId:s.SessionID,total,dice:d1+'-'+d2+'-'+d3});
+                        const p=engine.predict();
+                        engine.logPrediction(s.SessionID+1,p);
                         console.log('\n┌──────────────────────────────────────────┐');
-                        console.log('│ #'+info.SessionID+' | 🎲['+d1+','+d2+','+d3+']='+total+' | '+(total>=11?'TÀI':'XỈU'));
-                        console.log('│ 🎯 '+engine.getAccuracy()+'% | ⚡'+engine.getRuntime()+' | 📊'+engine.stats.totalSessions);
+                        console.log('│ #'+s.SessionID+' | 🎲['+d1+','+d2+','+d3+']='+total+' | '+result);
+                        console.log('│ 🎯 '+engine.getAccuracy()+'% | 📊 '+engine.stats.total);
                         console.log('├──────────────────────────────────────────┤');
-                        console.log('│ 🔮 DỰ ĐOÁN: '+prediction.prediction+' ('+prediction.confidence+'%)');
-                        console.log('│ 💡 '+prediction.reason);
-                        console.log('│ 📜 '+engine.history.slice(-15).map(x=>x==='T'?'T':'X').join(' '));
+                        console.log('│ 🔮 DỰ ĐOÁN: '+p.prediction+' ('+p.confidence+'%)');
+                        console.log('│ 💡 '+p.reason);
                         console.log('└──────────────────────────────────────────┘\n');
                     }
                 }
-            });
-        }catch(e){}
+            }
+        }catch(_){}
     });
-    
-    websocket.on('close',function(code){log('WS','Disconnected ('+code+')');if(pingTimer){clearInterval(pingTimer);pingTimer=null}websocket=null;if(reconnectTimer)clearTimeout(reconnectTimer);reconnectTimer=setTimeout(connectWebSocket,backoff)});
-    websocket.on('error',function(error){log('ERROR','WS: '+(error.message||'unknown'))});
+    ws.on('close',()=>{log('WS','Disconnected');setTimeout(connect,5000)});
+    ws.on('error',e=>{log('ERROR',e.message);ws.close()});
 }
 
-setInterval(function(){engine.saveHistory();engine.savePredictionLog();engine.savePatternWeights()},SAVE_MS);
-
-const server=http.createServer(function(req,res){
+const server=http.createServer((req,res)=>{
     res.setHeader('Content-Type','application/json');res.setHeader('Access-Control-Allow-Origin','*');
-    const url=new URL(req.url,'http://localhost:'+API_PORT);
-    if(url.pathname==='/health'){res.writeHead(200);res.end(JSON.stringify({status:'ok',version:'v5-ensemble',patterns:47,sessions:engine.stats.totalSessions,accuracy:engine.getAccuracy()}))}
-    else if(url.pathname==='/api/predict'){const p=engine.predict();res.end(JSON.stringify({prediction:p.prediction,confidence:p.confidence,reason:p.reason,method:p.method}))}
-    else if(url.pathname==='/api/stats'){res.end(JSON.stringify({sessions:engine.stats.totalSessions,correct:engine.stats.correctPredictions,wrong:engine.stats.wrongPredictions,accuracy:engine.getAccuracy(),runtime:engine.getRuntime()}))}
-    else if(url.pathname==='/api/prediction_log'){res.end(JSON.stringify(engine.getPredictionLog(parseInt(url.searchParams.get('limit')||'50'))))}
-    else if(url.pathname==='/api/reset_stats'){engine.stats.correctPredictions=0;engine.stats.wrongPredictions=0;res.end(JSON.stringify({status:'ok'}))}
-    else{res.end(JSON.stringify({name:'XocDia88 Ensemble',version:'v5-ensemble',patterns:47,accuracy:engine.getAccuracy()}))}
+    const url=new URL(req.url,'http://localhost:'+PORT);
+    if(url.pathname==='/health')res.end(JSON.stringify({status:'ok',accuracy:engine.getAccuracy(),sessions:engine.stats.total}));
+    else if(url.pathname==='/api/predict'){const p=engine.predict();res.end(JSON.stringify(p))}
+    else if(url.pathname==='/api/stats')res.end(JSON.stringify({...engine.stats,accuracy:engine.getAccuracy()}));
+    else if(url.pathname==='/api/logs')res.end(JSON.stringify(engine.getLogs(parseInt(url.searchParams.get('limit')||'50'))));
+    else if(url.pathname==='/api/reset'){engine.stats.correct=0;engine.stats.wrong=0;res.end(JSON.stringify({status:'ok'}))}
+    else res.end(JSON.stringify({name:'XocDia88',accuracy:engine.getAccuracy()}));
 });
 
-server.listen(API_PORT,function(){console.log('API: http://localhost:'+API_PORT)});
-
+d();server.listen(PORT,()=>console.log('API: http://localhost:'+PORT));
 console.log('╔══════════════════════════════════╗');
-console.log('║  XOCDIA88 ENSEMBLE              ║');
-console.log('║  47 PATTERNS                    ║');
+console.log('║   XOCDIA88 - PORT FROM SMALI    ║');
+console.log('║   47 PATTERNS + NN SIGMOID      ║');
+console.log('║   4 NHÁNH PREDICT               ║');
 console.log('╚══════════════════════════════════╝');
-
-ensureDir();connectWebSocket();
-process.on('SIGINT',function(){engine.saveHistory();engine.savePredictionLog();engine.savePatternWeights();process.exit(0)});
+connect();
+process.on('SIGINT',()=>{engine._save();process.exit(0)});
