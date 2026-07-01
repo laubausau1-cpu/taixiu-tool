@@ -115,7 +115,7 @@ class PredictionEngine{
         }
         if(totalWeight===0)return{prediction:'X',confidence:50,details:[]};
         const margin=Math.abs(votesT-votesX)/totalWeight;
-        return{prediction:votesT>votesX?'T':'X',confidence:Math.round(margin*100),details:details.sort((a,b)=>b.weight-a.weight).slice(0,10)};
+        return{prediction:votesT>votesX?"T":"X",confidence:Math.round(margin*100),details:details.sort((a,b)=>b.weight-a.weight).slice(0,10)};
     }
 
     predict(){
@@ -124,7 +124,7 @@ class PredictionEngine{
             const nnOut=this.nn.forward(features);
             const pred=nnOut.tai>nnOut.xiu?'T':'X';
             this.lastPrediction=pred;
-            return{prediction:pred==='T'?'Tài':'Xỉu',confidence:Math.round(Math.max(nnOut.tai,nnOut.xiu)*100),reason:'Warmup NN',method:'warmup'};
+            return{prediction:pred==="T"?"Tài":"Xỉu",predictionRaw:pred,confidence:Math.round(Math.max(nnOut.tai,nnOut.xiu)*100),reason:'Warmup NN',method:'warmup'};
         }
         const ensemble=this._ensembleVote();
         const features=extractFeatures(this.history,this.sessions);
@@ -144,7 +144,7 @@ class PredictionEngine{
         const pred=nnOut.tai>nnOut.xiu?'T':'X';
         const conf=Math.round(Math.max(nnOut.tai,nnOut.xiu)*100);
         this.lastPrediction=pred;
-        return{prediction:pred==='T'?'Tài':'Xỉu',confidence:conf,reason:'Neural Network',method:'nn_fallback'};
+        return{prediction:pred==="T"?"Tài":"Xỉu",predictionRaw:pred,confidence:conf,reason:'Neural Network',method:'nn_fallback'};
     }
 
     addResult(resultInput,sessionData={}){
