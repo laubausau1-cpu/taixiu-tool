@@ -11,11 +11,11 @@ function softmax(arr){const max=Math.max(...arr);const exp=arr.map(v=>Math.exp(v
 class CircularBuffer{constructor(cap){this.buf=[];this.cap=cap}push(v){this.buf.push(v);if(this.buf.length>this.cap)this.buf.shift()}last(n){return this.buf.slice(-n)}get length(){return this.buf.length}get(i){return i<0?this.buf[this.buf.length+i]:this.buf[i]}}
 
 class NeuralNetwork{
-    constructor(){this.W1=this._xavier(10,8);this.b1=new Array(8).fill(0);this.W2=this._xavier(8,2);this.b2=new Array(2).fill(0);this.lr=0.001;this.momentum=0.9;this.vW1=this._zeros(10,8);this.vb1=new Array(8).fill(0);this.vW2=this._zeros(8,2);this.vb2=new Array(2).fill(0)}
+    constructor(){this.W1=this._xavier(10,16);this.b1=new Array(16).fill(0);this.W2=this._xavier(8,2);this.b2=new Array(2).fill(0);this.lr=0.01;this.momentum=0.9;this.vW1=this._zeros(10,8);this.vb1=new Array(16).fill(0);this.vW2=this._zeros(8,2);this.vb2=new Array(2).fill(0)}
     _xavier(r,c){const s=Math.sqrt(2/(r+c));return Array.from({length:r},()=>Array.from({length:c},()=>(Math.random()*2-1)*s))}
     _zeros(r,c){return Array.from({length:r},()=>new Array(c).fill(0))}
-    forward(input){this.z1=new Array(8);this.a1=new Array(8);for(let j=0;j<8;j++){this.z1[j]=this.b1[j];for(let i=0;i<10;i++)this.z1[j]+=this.W1[i][j]*input[i];this.a1[j]=relu(this.z1[j])}this.z2=new Array(2);for(let j=0;j<2;j++){this.z2[j]=this.b2[j];for(let i=0;i<8;i++)this.z2[j]+=this.W2[i][j]*this.a1[i]}this.a2=softmax(this.z2);return{tai:this.a2[0],xiu:this.a2[1]}}
-    train(input,target){this.forward(input);const dz2=[this.a2[0]-target[0],this.a2[1]-target[1]];for(let i=0;i<8;i++){for(let j=0;j<2;j++){const g=dz2[j]*this.a1[i];this.vW2[i][j]=this.momentum*this.vW2[i][j]-this.lr*g;this.W2[i][j]+=this.vW2[i][j]}}for(let j=0;j<2;j++){this.vb2[j]=this.momentum*this.vb2[j]-this.lr*dz2[j];this.b2[j]+=this.vb2[j]}const dz1=new Array(8);for(let i=0;i<8;i++){dz1[i]=0;for(let j=0;j<2;j++)dz1[i]+=dz2[j]*this.W2[i][j];dz1[i]*=this.z1[i]>0?1:0}for(let i=0;i<10;i++){for(let j=0;j<8;j++){const g=dz1[j]*input[i];this.vW1[i][j]=this.momentum*this.vW1[i][j]-this.lr*g;this.W1[i][j]+=this.vW1[i][j]}}for(let j=0;j<8;j++){this.vb1[j]=this.momentum*this.vb1[j]-this.lr*dz1[j];this.b1[j]+=this.vb1[j]}}
+    forward(input){this.z1=new Array(16);this.a1=new Array(16);for(let j=0;j<8;j++){this.z1[j]=this.b1[j];for(let i=0;i<10;i++)this.z1[j]+=this.W1[i][j]*input[i];this.a1[j]=relu(this.z1[j])}this.z2=new Array(2);for(let j=0;j<2;j++){this.z2[j]=this.b2[j];for(let i=0;i<8;i++)this.z2[j]+=this.W2[i][j]*this.a1[i]}this.a2=softmax(this.z2);return{tai:this.a2[0],xiu:this.a2[1]}}
+    train(input,target){this.forward(input);const dz2=[this.a2[0]-target[0],this.a2[1]-target[1]];for(let i=0;i<8;i++){for(let j=0;j<2;j++){const g=dz2[j]*this.a1[i];this.vW2[i][j]=this.momentum*this.vW2[i][j]-this.lr*g;this.W2[i][j]+=this.vW2[i][j]}}for(let j=0;j<2;j++){this.vb2[j]=this.momentum*this.vb2[j]-this.lr*dz2[j];this.b2[j]+=this.vb2[j]}const dz1=new Array(16);for(let i=0;i<8;i++){dz1[i]=0;for(let j=0;j<2;j++)dz1[i]+=dz2[j]*this.W2[i][j];dz1[i]*=this.z1[i]>0?1:0}for(let i=0;i<10;i++){for(let j=0;j<8;j++){const g=dz1[j]*input[i];this.vW1[i][j]=this.momentum*this.vW1[i][j]-this.lr*g;this.W1[i][j]+=this.vW1[i][j]}}for(let j=0;j<8;j++){this.vb1[j]=this.momentum*this.vb1[j]-this.lr*dz1[j];this.b1[j]+=this.vb1[j]}}
     save(){return{W1:this.W1,b1:this.b1,W2:this.W2,b2:this.b2,vW1:this.vW1,vb1:this.vb1,vW2:this.vW2,vb2:this.vb2}}
     load(d){if(!d)return;this.W1=d.W1;this.b1=d.b1;this.W2=d.W2;this.b2=d.b2;this.vW1=d.vW1;this.vb1=d.vb1;this.vW2=d.vW2;this.vb2=d.vb2}
 }
@@ -78,19 +78,19 @@ class XocDiaEngine{
             {name:'Bệt',check:()=>{const h=sl(6);if(h.length<6)return null;const t=cnt(h,'T');if(t>=6)return true;if(t===0)return false;return null}},
             {name:'Bệt siêu dài',check:()=>{const h=sl(10);if(h.length<10)return null;const t=cnt(h,'T');if(t>=10)return true;if(t===0)return false;return null}},
             {name:'Bệt xen kẽ ngắn',check:()=>{const h=sl(6);if(h.length<6)return null;const l=h[h.length-1];let s=0;for(let i=h.length-1;i>=0;i--){if(h[i]===l)s++;else break}return s>=3?l==='T':null}},
-            {name:'Bệt gãy nhẹ',check:()=>{const h=sl(6);if(h.length<6)return null;let b=0;for(let i=1;i<h.length;i++)if(h[i]!==h[i-1])b++;return b<=1?h[h.length-1]==='T':null}},
-            {name:'Đảo 1-1',check:()=>{if(self.history.length<4)return null;return lst(1)===lst(3)&&lst(1)!==lst(2)?lst(1)==='T':null}},
+            {disabled:true,name:'Bệt gãy nhẹ',check:()=>{const h=sl(6);if(h.length<6)return null;let b=0;for(let i=1;i<h.length;i++)if(h[i]!==h[i-1])b++;return b<=1?h[h.length-1]==='T':null}},
+            {disabled:true,name:'Đảo 1-1',check:()=>{if(self.history.length<4)return null;return lst(1)===lst(3)&&lst(1)!==lst(2)?lst(1)==='T':null}},
             {name:'Kép 2-2',check:()=>{const h=sl(4);if(h.length<4)return null;if(h[0]===h[1]&&h[2]===h[3]&&h[0]!==h[2])return h[3]==='T';return null}},
             {name:'3-3',check:()=>{const h=sl(6);if(h.length<6)return null;if(h[0]===h[1]&&h[1]===h[2]&&h[3]===h[4]&&h[4]===h[5]&&h[0]!==h[3])return h[5]==='T';return null}},
             {name:'Chu kỳ 2',check:()=>{const h=sl(4);if(h.length<4)return null;if(h[0]===h[2]&&h[1]===h[3]&&h[0]!==h[1])return h[3]!=='T';return null}},
             {name:'Chu kỳ 3',check:()=>{const h=sl(6);if(h.length<6)return null;if(h[0]===h[3]&&h[1]===h[4]&&h[2]===h[5]&&h[0]!==h[1])return h[5]!=='T';return null}},
-            {name:'Lặp 2-1',check:()=>{const h=sl(3);if(h.length<3)return null;if(h[0]===h[1]&&h[1]!==h[2])return h[2]==='T';return null}},
+            {disabled:true,name:'Lặp 2-1',check:()=>{const h=sl(3);if(h.length<3)return null;if(h[0]===h[1]&&h[1]!==h[2])return h[2]==='T';return null}},
             {name:'Lặp 3-2',check:()=>{const h=sl(5);if(h.length<5)return null;if(h[0]===h[1]&&h[1]===h[2]&&h[2]!==h[3]&&h[3]===h[4])return h[4]==='T';return null}},
             {name:'Đối xứng',check:()=>{const h=sl(5);if(h.length<5)return null;const rev=[...h].reverse();if(h.join('')===rev.join(''))return h[0]!=='T';return null}},
             {name:'Bán đối xứng',check:()=>{const h=sl(5);if(h.length<5)return null;const rev=[...h].reverse();let m=0;for(let i=0;i<5;i++)if(h[i]===rev[i])m++;return m>=4?h[2]!=='T':null}},
             {name:'Bệt ngược',check:()=>{const h=sl(6);if(h.length<6)return null;const l=h[h.length-1];let s=0;for(let i=h.length-1;i>=0;i--){if(h[i]===l)s++;else break}return s>=6?l!=='T':null}},
             {name:'Xỉu kép',check:()=>{const h=sl(2);return h.length>=2&&h[0]==='X'&&h[1]==='X'?false:null}},
-            {name:'Tài kép',check:()=>{const h=sl(2);return h.length>=2&&h[0]==='T'&&h[1]==='T'?true:null}},
+            {disabled:true,name:'Tài kép',check:()=>{const h=sl(2);return h.length>=2&&h[0]==='T'&&h[1]==='T'?true:null}},
             {name:'Xen kẽ',check:()=>{const h=sl(5);if(h.length<5)return null;let a=true;for(let i=1;i<h.length;i++)if(h[i]===h[i-1]){a=false;break}return a?h[h.length-1]!=='T':null}},
             {name:'Gập ghềnh',check:()=>{const h=sl(6);if(h.length<6)return null;let sw=0;for(let i=1;i<h.length;i++)if(h[i]!==h[i-1])sw++;return sw>=3?h[h.length-1]!=='T':null}},
             {name:'Bậc thang',check:()=>{const h=sl(5);if(h.length<5)return null;let inc=true;for(let i=1;i<h.length;i++)if(h[i]===h[i-1]){inc=false;break}return inc?h[h.length-1]!=='T':null}},
@@ -151,6 +151,7 @@ class XocDiaEngine{
         const h80=this.history.last(80);
         if(h80.length<8)return results;
         for(const pattern of this.patterns){
+            if(pattern.disabled) continue;
             const isTai=pattern.check();
             if(isTai===null)continue;
             const name=pattern.name;
@@ -209,13 +210,10 @@ class XocDiaEngine{
         }
 
         // NHÁNH 4: Fallback - Neural Network sigmoid (SMALI: He class)
-        const streakFactor=this.stats.curStreak/10;
-        const taiRatio=this.stats.total>0?this.stats.tai/this.stats.total:0.5;
-        const nnInput=[streakFactor,taiRatio,0.5];
-        let nnSum=0;
-        for(let i=0;i<3;i++)nnSum+=0.35*nnInput[i];
-        const nnScore=sigmoid(nnSum);
-        const pred=nnScore>=0.5?'T':'X';
+const features=extractFeatures(this.history,this.sessions);
+const out=this.nn.forward(features);
+const nnScore=Math.max(out.tai,out.xiu);
+const pred=out.tai>out.xiu?"T":"X";
         this.lastPrediction=pred;
         const conf=Math.round(clamp(nnScore,0.4,0.6)*100);
         return{prediction:pred==='T'?'Tài':'Xỉu',confidence:conf,method:'nn_fallback',reason:'Neural Network'};
