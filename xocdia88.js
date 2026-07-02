@@ -77,10 +77,10 @@ class XocDiaEngine{
         this.patterns=[
             {name:'Bệt',check:()=>{const h=sl(6);if(h.length<6)return null;const t=cnt(h,'T');if(t>=6)return true;if(t===0)return false;return null}},
             {name:'Bệt siêu dài',check:()=>{const h=sl(10);if(h.length<10)return null;const t=cnt(h,'T');if(t>=10)return true;if(t===0)return false;return null}},
-            {name:'Bệt xen kẽ ngắn',check:()=>{const h=sl(6);if(h.length<6)return null;const l=h[h.length-1];let s=0;for(let i=h.length-1;i>=0;i--){if(h[i]===l)s++;else break}return s>=3?l==='T':null}},
+            {disabled:true,name:'Bệt xen kẽ ngắn',check:()=>{const h=sl(6);if(h.length<6)return null;const l=h[h.length-1];let s=0;for(let i=h.length-1;i>=0;i--){if(h[i]===l)s++;else break}return s>=3?l==='T':null}},
             {disabled:true,name:'Bệt gãy nhẹ',check:()=>{const h=sl(6);if(h.length<6)return null;let b=0;for(let i=1;i<h.length;i++)if(h[i]!==h[i-1])b++;return b<=1?h[h.length-1]==='T':null}},
             {disabled:true,name:'Đảo 1-1',check:()=>{if(self.history.length<4)return null;return lst(1)===lst(3)&&lst(1)!==lst(2)?lst(1)==='T':null}},
-            {name:'Kép 2-2',check:()=>{const h=sl(4);if(h.length<4)return null;if(h[0]===h[1]&&h[2]===h[3]&&h[0]!==h[2])return h[3]==='T';return null}},
+            {disabled:true,name:'Kép 2-2',check:()=>{const h=sl(4);if(h.length<4)return null;if(h[0]===h[1]&&h[2]===h[3]&&h[0]!==h[2])return h[3]==='T';return null}},
             {name:'3-3',check:()=>{const h=sl(6);if(h.length<6)return null;if(h[0]===h[1]&&h[1]===h[2]&&h[3]===h[4]&&h[4]===h[5]&&h[0]!==h[3])return h[5]==='T';return null}},
             {name:'Chu kỳ 2',check:()=>{const h=sl(4);if(h.length<4)return null;if(h[0]===h[2]&&h[1]===h[3]&&h[0]!==h[1])return h[3]!=='T';return null}},
             {name:'Chu kỳ 3',check:()=>{const h=sl(6);if(h.length<6)return null;if(h[0]===h[3]&&h[1]===h[4]&&h[2]===h[5]&&h[0]!==h[1])return h[5]!=='T';return null}},
@@ -100,7 +100,7 @@ class XocDiaEngine{
             {name:'Đa dạng',check:()=>{const h=sl(10);if(h.length<10)return null;return new Set(h).size>=4?h[h.length-1]!=='T':null}},
             {name:'Chu kỳ tăng',check:()=>{const h=sl(6);if(h.length<6)return null;let s=[],c=1;for(let i=h.length-2;i>=0;i--){if(h[i]===h[i+1])c++;else{s.push(c);c=1}}s.push(c);for(let j=1;j<s.length;j++)if(s[j]<=s[j-1])return null;return h[h.length-1]!=='T'}},
             {name:'Chu kỳ giảm',check:()=>{const h=sl(6);if(h.length<6)return null;let s=[],c=1;for(let i=h.length-2;i>=0;i--){if(h[i]===h[i+1])c++;else{s.push(c);c=1}}s.push(c);for(let j=1;j<s.length;j++)if(s[j]>=s[j-1])return null;return h[h.length-1]!=='T'}},
-            {name:'Cầu lặp',check:()=>{const h=sl(6);return h.length>=6?h[0]==='T':null}},
+            {disabled:true,name:'Cầu lặp',check:()=>{const h=sl(6);return h.length>=6?h[0]==='T':null}},
             {name:'Đối ngược',check:()=>{const h=sl(4);if(h.length<4)return null;return h[0]!==h[1]&&h[1]===h[2]&&h[2]!==h[3]?h[3]!=='T':null}},
             {name:'Phân cụm',check:()=>{const h=sl(10);if(h.length<10)return null;return cnt(h,'T')>5?true:null}},
             {name:'Lệch ngẫu nhiên',check:()=>{const h=sl(10);if(h.length<10)return null;const t=cnt(h,'T');return t>=5?false:true}},
@@ -151,6 +151,7 @@ class XocDiaEngine{
         const h80=this.history.last(80);
         if(h80.length<8)return results;
         for(const pattern of this.patterns){
+    if(pattern.disabled) continue;
             if(pattern.disabled) continue;
             const isTai=pattern.check();
             if(isTai===null)continue;
@@ -190,7 +191,7 @@ class XocDiaEngine{
         const patterns=this.analyzePatterns();
 
         // NHÁNH 2: Strong pattern (>0.72) - SMALI: this.h = pattern.c
-        if(patterns.length>0&&patterns[0].score>0.72){
+        if(patterns.length>0&&patterns[0].score>0.80){
             const bp=patterns[0];
             const pred=bp.isTai?'T':'X';
             this.lastPrediction=pred;
@@ -199,7 +200,7 @@ class XocDiaEngine{
         }
 
         // NHÁNH 3: Medium pattern (>0.55) - SMALI: combined score
-        if(patterns.length>0&&patterns[0].score>0.55){
+        if(patterns.length>0&&patterns[0].score>0.68){
             const bp=patterns[0];
             const quick=this.getQuickAnalysis();
             const combined=bp.score*0.6+(bp.isTai?quick.score:(1-quick.score))*0.4;
