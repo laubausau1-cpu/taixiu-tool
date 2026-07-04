@@ -151,7 +151,6 @@ class XocDiaEngine{
         const h80=this.history.last(80);
         if(h80.length<8)return results;
         for(const pattern of this.patterns){
-    if(pattern.disabled) continue;
             if(pattern.disabled) continue;
             const isTai=pattern.check();
             if(isTai===null)continue;
@@ -194,7 +193,13 @@ class XocDiaEngine{
             return{prediction:pred==='T'?'Tài':'Xỉu',confidence:50,method:'warmup',reason:'Khởi động '+this.history.length+'/'+this.MIN_S};
         }
 
-        const patterns=this.analyzePatterns();
+        // Dice table
+    if(sessionData&&sessionData.total&&sessionData.total>0){
+        const t=sessionData.total;
+        if(t<=10){this.lastPrediction='X';return{prediction:'Xỉu',confidence:75,method:'dice_table',reason:'Tổng '+t+' → Xỉu'};}
+        if(t>=11){this.lastPrediction='T';return{prediction:'Tài',confidence:75,method:'dice_table',reason:'Tổng '+t+' → Tài'};}
+    }
+    const patterns=this.analyzePatterns();
 
         // NHÁNH 2: Strong pattern (>0.72) - SMALI: this.h = pattern.c
         if(patterns.length>0&&patterns[0].score>0.80){
