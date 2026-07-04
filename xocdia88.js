@@ -172,12 +172,10 @@ class XocDiaEngine{
     }
 
     // ==================== PORT TỪ SMALI METHOD C: predict() - 4 NHÁNH ====================
-    predict(){
+    predict(sessionData={}){
     // Bảng điểm xúc xắc - ưu tiên cao nhất
     if(arguments[0]&&arguments[0].total&&arguments[0].total>0){
         const t=arguments[0].total;
-        if(t<=10){this.lastPrediction='X';return{prediction:'Xỉu',confidence:75,method:'dice_table',reason:'Tổng '+t+' (3-10) → Xỉu'};}
-        if(t>=11){this.lastPrediction='T';return{prediction:'Tài',confidence:75,method:'dice_table',reason:'Tổng '+t+' (11-18) → Tài'};}
     }
         // NHÁNH 1: Warmup (<6 phiên) - SMALI: random 0.52/0.48
         if(this.history.length<this.MIN_S){
@@ -196,8 +194,6 @@ class XocDiaEngine{
         // Dice table
     if(sessionData&&sessionData.total&&sessionData.total>0){
         const t=sessionData.total;
-        if(t<=10){this.lastPrediction='X';return{prediction:'Xỉu',confidence:75,method:'dice_table',reason:'Tổng '+t+' → Xỉu'};}
-        if(t>=11){this.lastPrediction='T';return{prediction:'Tài',confidence:75,method:'dice_table',reason:'Tổng '+t+' → Tài'};}
     }
     const patterns=this.analyzePatterns();
 
