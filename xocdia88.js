@@ -62,7 +62,7 @@ class XocDiaEngine{
         this.patternFailCount={};
         this.patternSuccessCount={};
         this.stats={total:0,tai:0,xiu:0,correct:0,wrong:0,longestTai:0,longestXiu:0,curType:'',curStreak:0};
-        this.MIN_S=6;
+        this.MIN_S=1;
         this._initPatterns();
         this._load();
     }
