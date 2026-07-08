@@ -13,3 +13,9 @@
 [2026-06-25T02:09:13.024Z] [WARN] WebSocket đã đóng, sẽ thử kết nối lại sau 5 giây
 [2026-06-25T02:09:14.351Z] [INFO] Đang tắt server...
 [2026-06-25T02:09:14.357Z] [INFO] Đã lưu dữ liệu. Tạm biệt!
+[2026-07-04T11:02:18.127Z][WS]Disconnected
+[2026-07-08T12:39:14.320Z][WS]Disconnected
+[2026-07-08T12:39:19.645Z][WS]Disconnected
+[2026-07-08T12:39:24.943Z][WS]Disconnected
+[2026-07-08T12:39:30.358Z][WS]Disconnected
+[2026-07-08T12:39:35.678Z][WS]Disconnected

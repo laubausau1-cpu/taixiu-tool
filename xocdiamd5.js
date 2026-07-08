@@ -8,7 +8,6 @@ function sigmoid(x){return 1/(1+Math.exp(-x))}
 
 class CircularBuffer{constructor(cap){this.buf=[];this.cap=cap}push(v){this.buf.push(v);if(this.buf.length>this.cap)this.buf.shift()}last(n){return this.buf.slice(-n)}get length(){return this.buf.length}get(i){return i<0?this.buf[this.buf.length+i]:this.buf[i]}}
 
-// Neural Network từ Smali - class Lx/he
 class He{constructor(){this.b=[0.35,0.35,0.3];this.c=0.5}predict(p){let s=0;for(let i=0;i<3;i++)s+=this.b[i]*p[i];return clamp(sigmoid(s),0.4,0.6)}}
 
 class XocDiaMD5{
@@ -22,7 +21,6 @@ class XocDiaMD5{
   _load(){try{const f=path.join(DIR,'state_md5.json');if(fs.existsSync(f)){const d=JSON.parse(fs.readFileSync(f,'utf8'));if(d.history){this.history=new CircularBuffer(2000);d.history.forEach(v=>this.history.push(v))}if(d.sessions)this.sessions=d.sessions;if(d.logs)this.logs=d.logs;if(d.stats)this.stats=d.stats;if(d.patternSuccess)this.patternSuccess=d.patternSuccess;if(d.patternFail)this.patternFail=d.patternFail}}catch(_){}}
   _save(){try{fs.writeFileSync(path.join(DIR,'state_md5.json'),JSON.stringify({history:this.history.buf.slice(-2000),sessions:this.sessions.slice(-2000),logs:this.logs.slice(-5000),stats:this.stats,patternSuccess:this.patternSuccess,patternFail:this.patternFail}))}catch(_){}}
 
-  // 47 PATTERNS từ Smali
   _initPatterns(){
     const sl=(n)=>this.history.last(n);const lst=(n)=>this.history.get(-n);
     const cnt=(a,v)=>a.filter(x=>x===v).length;const self=this;
